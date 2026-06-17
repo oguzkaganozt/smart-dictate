@@ -1,0 +1,3 @@
+# smart-dictate: rephrase selected text
+"~/.local/bin/voxtype-rephrase"
+    control + alt + r

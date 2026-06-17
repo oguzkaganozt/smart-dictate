@@ -27,6 +27,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -147,29 +148,54 @@ MET\u0130N:
     return output
 
 
+def _notify(text: str) -> None:
+    MAX_LEN = 100
+    body = text[:MAX_LEN].replace("\n", " ").strip()
+    if len(text) > MAX_LEN:
+        body += "…"
+    try:
+        subprocess.run(
+            ["notify-send", "--icon=audio-input-microphone",
+             "--app-name=smart-dictate", "Dikte edildi", body],
+            timeout=3.0,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
 def main() -> int:
     original = sys.stdin.read()
     text = original.strip()
 
-    if not text or should_skip(text):
+    if not text:
+        return 0
+
+    if should_skip(text):
         sys.stdout.write(original)
+        _notify(text)
         return 0
 
     try:
         output = clean(text)
     except (TimeoutError, RuntimeError, urllib.error.URLError, json.JSONDecodeError, OSError):
         sys.stdout.write(original)
+        _notify(text)
         return 0
 
     if not output:
         sys.stdout.write(original)
+        _notify(text)
         return 0
 
     if len(output) > max(len(text) * 1.5, len(text) + 120):
         sys.stdout.write(original)
+        _notify(text)
         return 0
 
     sys.stdout.write(output)
+    _notify(output)
     return 0
 
 

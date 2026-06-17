@@ -1,0 +1,13 @@
+[Unit]
+Description=xbindkeys hotkey daemon for smart-dictate
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/xbindkeys -n -f %h/.xbindkeysrc
+Restart=on-failure
+RestartSec=3
+Environment=DISPLAY=${DISPLAY_PLACEHOLDER}
+
+[Install]
+WantedBy=graphical-session.target

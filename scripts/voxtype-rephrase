@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""
-voxtype-rephrase: rephrase selected text using Groq LLM.
-
-Reads selected text from PRIMARY selection (xclip), sends to Groq for
-rephrasing, and replaces the selection with the rephrased version via
-clipboard + xdotool paste.
-
-Usage:
-  Bind to a hotkey in your compositor. Select text, press hotkey.
-
-Config precedence (highest first):
-- Env var (GROQ_MODEL, GROQ_ENDPOINT, REPHRASE_STYLE)
-- ~/.config/smart-dictate/config.toml
-- Script defaults
-"""
 import json
 import os
 from pathlib import Path
@@ -23,9 +8,17 @@ import time
 import urllib.error
 import urllib.request
 
-
 CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
+LOG = Path("/tmp") / "voxtype-rephrase.log"
+
+
+def log(msg: str) -> None:
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 
 def _load_config() -> dict:
@@ -66,26 +59,16 @@ USER_PROMPT = _cfg["rephrase"].get("user_prompt", DEFAULT_USER_PROMPT)
 
 
 def get_selected_text() -> str:
-    result = subprocess.run(
-        ["xclip", "-o", "-selection", "primary"],
-        capture_output=True, text=True, timeout=2.0,
-    )
-    if result.returncode == 0:
-        return result.stdout.strip()
+    for sel in ["primary", "clipboard"]:
+        result = subprocess.run(
+            ["xclip", "-o", "-selection", sel],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            log(f"read from {sel}: {len(result.stdout.strip())} chars")
+            return result.stdout.strip()
+    log("no text found in PRIMARY or CLIPBOARD")
     return ""
-
-
-def should_skip(text: str) -> bool:
-    if not text:
-        return True
-    if len(text) < 40:
-        return True
-    code_markers = ["&&", "||", "sudo ", "git ", "docker ",
-                    "systemctl ", "journalctl ", "~/", "./", "--"]
-    lowered = text.lower()
-    if any(marker in lowered for marker in code_markers):
-        return True
-    return False
 
 
 def get_api_key() -> str:
@@ -102,11 +85,9 @@ def get_api_key() -> str:
 
 def rephrase(text: str) -> str:
     user = USER_PROMPT.format(text=text)
-
     api_key = get_api_key()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
-
     payload = {
         "model": MODEL,
         "messages": [
@@ -116,12 +97,10 @@ def rephrase(text: str) -> str:
         "temperature": 0.3,
         "max_completion_tokens": 512,
     }
-
     if MODEL.startswith("openai/gpt-oss"):
         payload.update({"include_reasoning": False, "reasoning_effort": "low"})
     elif MODEL.startswith("qwen/"):
         payload["reasoning_effort"] = "none"
-
     req = urllib.request.Request(
         ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),
@@ -131,80 +110,91 @@ def rephrase(text: str) -> str:
             "User-Agent": "voxtype-rephrase/1.0",
         },
     )
-
     with urllib.request.urlopen(req, timeout=15.0) as response:
         data = json.loads(response.read().decode("utf-8"))
-
     choices = data.get("choices") or []
     output = choices[0].get("message", {}).get("content", "").strip() if choices else ""
     output = output.strip('"').strip()
+    log(f"rephrase output: {len(output)} chars")
     return output
 
 
-def _is_terminal(wid: str) -> bool:
+def _notify(text: str) -> None:
+    MAX_LEN = 100
+    body = text[:MAX_LEN].replace("\n", " ").strip()
+    if len(text) > MAX_LEN:
+        body += "..."
     try:
-        wclass = subprocess.run(
-            ["xdotool", "getwindowclassname", wid],
-            capture_output=True, text=True, timeout=2.0,
-        ).stdout.strip().lower()
-        wprop = subprocess.run(
-            ["xprop", "-id", wid, "WM_CLASS"],
-            capture_output=True, text=True, timeout=2.0,
-        ).stdout.lower()
-        targets = "terminal console ptyxis kgx konsole tilix kitty alacritty wezterm ghostty"
-        for t in targets.split():
-            if t in wclass or t in wprop:
-                return True
+        subprocess.run(
+            ["notify-send", "--icon=edit-paste",
+             "--app-name=smart-dictate", "D\xfczeltildi", body],
+            timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     except Exception:
         pass
-    return False
 
 
-def paste_text(text: str, target_wid: str = "") -> None:
-    if target_wid:
-        subprocess.run(
-            ["xdotool", "windowactivate", "--sync", target_wid],
-            capture_output=True, timeout=2.0,
-        )
-    time.sleep(0.1)
-    is_term = _is_terminal(target_wid) if target_wid else False
-    paste_key = "ctrl+shift+v" if is_term else "ctrl+v"
-    proc = subprocess.Popen(
-        ["xclip", "-selection", "clipboard", "-l", "2"],
-        stdin=subprocess.PIPE, text=True,
-    )
-    proc.stdin.write(text)
-    proc.stdin.close()
-    time.sleep(0.15)
-    subprocess.run(["xdotool", "key", "--clearmodifiers", paste_key], timeout=5.0)
+def _notify_err(msg: str) -> None:
     try:
-        proc.wait(timeout=5.0)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+        subprocess.run(
+            ["notify-send", "--icon=edit-paste",
+             "--app-name=smart-dictate", "Hata", msg],
+            timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def paste_text(text: str, wid: str) -> None:
+    subprocess.run(
+        ["xclip", "-selection", "clipboard"],
+        input=text.encode(), timeout=2.0,
+    )
+    time.sleep(0.1)
+    if wid:
+        subprocess.run(
+            ["xdotool", "windowactivate", "--sync", wid],
+            capture_output=True, timeout=5.0,
+        )
+        time.sleep(0.05)
+    subprocess.run(["xdotool", "key", "ctrl+v"], timeout=5.0)
+    log(f"pasted {len(text)} chars")
+
+
+
 
 
 def main() -> int:
-    text = get_selected_text()
-    if not text:
-        return 1
+    log("=== start ===")
 
-    target_wid = subprocess.run(
+    wid = subprocess.run(
         ["xdotool", "getactivewindow"],
         capture_output=True, text=True, timeout=2.0,
     ).stdout.strip()
+    log(f"wid={wid}")
 
-    if should_skip(text):
-        return 0
+    text = get_selected_text()
+    if not text:
+        _notify_err("Metin bulunamad\u0131")
+        return 1
 
     try:
         output = rephrase(text)
-    except (TimeoutError, RuntimeError, urllib.error.URLError, json.JSONDecodeError, OSError):
+    except Exception as e:
+        log(f"API error: {e}")
+        _notify_err(f"API: {type(e).__name__}")
+        paste_text(text, wid)
         return 1
 
     if not output:
+        log("empty response")
+        _notify_err("Groq yan\u0131t vermedi")
+        paste_text(text, wid)
         return 1
 
-    paste_text(output, target_wid)
+    paste_text(output, wid)
+    _notify(output)
+    log("=== done ===")
     return 0
 
 

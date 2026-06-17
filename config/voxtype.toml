@@ -37,7 +37,7 @@ fallback_on_empty = true
 [output.notification]
 on_recording_start = false
 on_recording_stop = false
-on_transcription = true
+on_transcription = false
 
 [osd]
 enabled = false

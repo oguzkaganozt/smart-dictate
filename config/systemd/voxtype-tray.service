@@ -1,0 +1,16 @@
+[Unit]
+Description=smart-dictate system tray indicator
+Documentation=https://github.com/peteonrails/voxtype
+PartOf=graphical-session.target
+After=graphical-session.target voxtype.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/voxtype-tray
+Restart=on-failure
+RestartSec=3
+
+Environment=XDG_RUNTIME_DIR=%t
+
+[Install]
+WantedBy=graphical-session.target

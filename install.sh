@@ -134,7 +134,8 @@ preflight() {
 # systems the nvidia-driver package provides the Vulkan ICD instead.
 REQUIRED_PACKAGES=(voxtype xdotool xclip ydotool wtype wl-clipboard
                    libnotify-bin pipewire-alsa playerctl libvulkan1
-                   mesa-vulkan-drivers)
+                   mesa-vulkan-drivers
+                   gir1.2-ayatanaappindicator3-0.1 xbindkeys)
 
 missing_packages() {
   local miss=()
@@ -198,12 +199,19 @@ step_config() {
     rm -f "$rendered"
   fi
 
-  log "Deploying systemd unit + drop-in: $SYSTEMD_DST_DIR/"
+  log "Deploying systemd units: $SYSTEMD_DST_DIR/"
   run mkdir -p "$SYSTEMD_DST_DIR/voxtype.service.d"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
     install -m 0644 "$SYSTEMD_DIR/voxtype.service" "$SYSTEMD_DST_DIR/voxtype.service"
+    install -m 0644 "$SYSTEMD_DIR/voxtype-tray.service" \
+      "$SYSTEMD_DST_DIR/voxtype-tray.service"
     install -m 0644 "$SYSTEMD_DIR/voxtype.service.d/gpu.conf" \
       "$SYSTEMD_DST_DIR/voxtype.service.d/gpu.conf"
+    local rendered
+    rendered="$(mktemp)"
+    sed "s|\${DISPLAY_PLACEHOLDER}|${DISPLAY:-:0}|g" "$SYSTEMD_DIR/xbindkeys.service" > "$rendered"
+    install -m 0644 "$rendered" "$SYSTEMD_DST_DIR/xbindkeys.service"
+    rm -f "$rendered"
   fi
 }
 
@@ -225,6 +233,10 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-paste-active"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-rephrase" \
       "$SCRIPT_DST_DIR/voxtype-rephrase"
+    install -m 0755 "$SCRIPT_SRC_DIR/voxtype-tray" \
+      "$SCRIPT_DST_DIR/voxtype-tray"
+    install -m 0644 "$SCRIPT_DIR/config/xbindkeysrc" \
+      "$HOME/.xbindkeysrc"
   fi
 }
 
@@ -288,15 +300,32 @@ step_model() {
 
 step_service() {
   if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
-    log "Would: systemctl --user daemon-reload && enable --now voxtype"
+    log "Would: systemctl --user daemon-reload && enable --now voxtype + voxtype-tray + xbindkeys"
     return 0
   fi
 
-  log "Reloading systemd user manager + enabling voxtype service"
+  log "Reloading systemd user manager + enabling services"
   systemctl --user daemon-reload
-  systemctl --user enable --now voxtype.service
+  systemctl --user enable --now voxtype.service voxtype-tray.service xbindkeys.service
   sleep 1
   systemctl --user --no-pager --full status voxtype.service || true
+}
+
+step_keybinding() {
+  if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
+    return 0
+  fi
+  if ! command -v gsettings >/dev/null 2>&1; then
+    return 0
+  fi
+  local key="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+    name "smart-dictate rephrase" 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+    command "${SCRIPT_DST_DIR}/voxtype-rephrase" 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+    binding "<Control><Alt>r" 2>/dev/null || true
+  ok "GNOME keybinding set: Ctrl+Alt+R → voxtype-rephrase"
 }
 
 # ---------- verify ----------
@@ -323,6 +352,11 @@ verify() {
   else
     err "script:   $SCRIPT_DST_DIR/voxtype-rephrase MISSING"; fail=1
   fi
+  if [[ -x "$SCRIPT_DST_DIR/voxtype-tray" ]]; then
+    ok "script:   $SCRIPT_DST_DIR/voxtype-tray"
+  else
+    err "script:   $SCRIPT_DST_DIR/voxtype-tray MISSING"; fail=1
+  fi
 
   if [[ -f "$VOXTYPE_CONFIG_DST" ]]; then
     ok "config:   $VOXTYPE_CONFIG_DST"
@@ -334,6 +368,11 @@ verify() {
   else
     err "config:   $SMART_DICTATE_CONFIG_DST MISSING"; fail=1
   fi
+  if [[ -f "$HOME/.xbindkeysrc" ]]; then
+    ok "config:   $HOME/.xbindkeysrc"
+  else
+    err "config:   $HOME/.xbindkeysrc MISSING"; fail=1
+  fi
 
   if [[ -f "$SYSTEMD_DST_DIR/voxtype.service" ]]; then
     ok "service:  $SYSTEMD_DST_DIR/voxtype.service"
@@ -344,6 +383,21 @@ verify() {
     ok "drop-in:  $SYSTEMD_DST_DIR/voxtype.service.d/gpu.conf"
   else
     err "drop-in:  $SYSTEMD_DST_DIR/voxtype.service.d/gpu.conf MISSING"; fail=1
+  fi
+  if [[ -f "$SYSTEMD_DST_DIR/voxtype-tray.service" ]]; then
+    ok "service:  $SYSTEMD_DST_DIR/voxtype-tray.service"
+  else
+    err "service:  $SYSTEMD_DST_DIR/voxtype-tray.service MISSING"; fail=1
+  fi
+  if [[ -f "$SYSTEMD_DST_DIR/xbindkeys.service" ]]; then
+    ok "service:  $SYSTEMD_DST_DIR/xbindkeys.service"
+  else
+    err "service:  $SYSTEMD_DST_DIR/xbindkeys.service MISSING"; fail=1
+  fi
+  if systemctl --user is-active --quiet xbindkeys.service 2>/dev/null; then
+    ok "service:  xbindkeys.service (active)"
+  elif [[ "$MODE" != "check" && "$MODE" != "dry-run" ]]; then
+    warn "service:  xbindkeys.service NOT active"
   fi
 
   local model="$HOME/.local/share/voxtype/models/ggml-large-v3-turbo.bin"
@@ -377,15 +431,21 @@ verify() {
 
 # ---------- uninstall ----------
 do_uninstall() {
-  log "Stopping + disabling voxtype service"
+  log "Stopping + disabling services"
   systemctl --user disable --now voxtype.service 2>/dev/null || true
+  systemctl --user disable --now voxtype-tray.service 2>/dev/null || true
+  systemctl --user disable --now xbindkeys.service 2>/dev/null || true
 
-  log "Removing config, scripts, systemd unit"
+  log "Removing config, scripts, systemd units"
   rm -f  "$SYSTEMD_DST_DIR/voxtype.service"
+  rm -f  "$SYSTEMD_DST_DIR/voxtype-tray.service"
   rm -rf "$SYSTEMD_DST_DIR/voxtype.service.d"
   rm -f  "$SCRIPT_DST_DIR/voxtype-clean-dictation"
   rm -f  "$SCRIPT_DST_DIR/voxtype-paste-active"
   rm -f  "$SCRIPT_DST_DIR/voxtype-rephrase"
+  rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
+  rm -f  "$HOME/.xbindkeysrc"
+  rm -f  "$SYSTEMD_DST_DIR/xbindkeys.service"
 
   if [[ "${KEEP_CONFIG:-0}" != "1" ]]; then
     rm -f "$VOXTYPE_CONFIG_DST"
@@ -416,6 +476,7 @@ case "$MODE" in
     step_api_key
     step_model
     step_service
+    step_keybinding
     echo
     log "Installation finished. Running verify:"
     verify
@@ -430,6 +491,7 @@ case "$MODE" in
     step_api_key
     step_model
     step_service
+    step_keybinding
     echo
     log "Dry-run complete. Re-run without --dry-run to apply."
     exit 0
