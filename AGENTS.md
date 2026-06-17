@@ -16,7 +16,7 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 
 1. evdev hotkey (RIGHT CTRL, toggle mode) → VoxType daemon
 2. Silero VAD → whisper.cpp (Vulkan, large-v3-turbo, ~1.6 GB model)
-3. `voxtype-clean-dictation` (Groq LLM, 3.5s HTTP timeout, 6s daemon timeout, model: `openai/gpt-oss-120b`) — short snippets <90 chars / <14 words pass through; shell/code patterns (`sudo`, `git`, `&&`, `--`, `~/`, etc.) skip LLM
+3. `voxtype-clean-dictation` (Groq LLM, model: `qwen/qwen3.6-27b`, reasoning: `none`) — short snippets <90 chars / <14 words pass through; shell/code patterns (`sudo`, `git`, `&&`, `--`, `~/`, etc.) skip LLM
 4. xclip → clipboard → `voxtype-paste-active` fires Ctrl+V or Ctrl+Shift+V (terminal detection)
 5. `voxtype-clean-dictation` shows notification via `notify-send` (icon: `audio-input-microphone`)
 
@@ -38,12 +38,13 @@ Notifications are fire-and-forget (failures silently ignored).
 - `scripts/voxtype-clean-dictation` — stdin/stdout LLM cleanup pipe. Called by VoxType daemon.
 - `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v`.
 - Both use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
-- Model-specific payload fields: if model starts with `openai/gpt-oss`, payload includes `include_reasoning: false` + `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:126-131`.
-- Config file `~/.config/smart-dictate/config.toml` is read at import time by both. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_STYLE`) override config values at runtime.
+- Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
+- Config file `~/.config/smart-dictate/config.toml` is read at import time by both. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`) override config values at runtime.
+- `max_completion_tokens` is computed dynamically to fit within Groq free-tier 8000 TPM limit (`rephrase`:96-104). Caps at 4096, floor 512.
 
 ## Text rephrase
 
-`voxtype-rephrase` — binds to **Ctrl+Alt+R** (via xbindkeys). Reads PRIMARY/CLIPBOARD selection, rewrites via Groq (15s timeout, temp 0.3), pastes via `xdotool key ctrl+v`. Shows "Düzeltildi" notification on success. System prompt overridable via `REPHRASE_STYLE` env var.
+`voxtype-rephrase` — binds to **Ctrl+Alt+R** (via xbindkeys). Reads PRIMARY/CLIPBOARD selection, rewrites via Groq (5s timeout, temp 0.3, max 20000 chars input), pastes via `xdotool key ctrl+v`. Shows "Düzeltildi" notification on success. System prompt overridable via `REPHRASE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[rephrase].model` or `REPHRASE_MODEL`).
 
 Keybinding is handled by xbindkeys (systemd user service, autostarted). GNOME custom shortcut is also set during install for fallback.
 

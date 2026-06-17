@@ -39,22 +39,32 @@ def _load_config() -> dict:
 
 _cfg = _load_config()
 
-MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "openai/gpt-oss-120b")
-ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
-    "endpoint", "https://api.groq.com/openai/v1/chat/completions"
+MODEL = (
+    os.environ.get("REPHRASE_MODEL")
+    or _cfg["rephrase"].get("model")
+    or os.environ.get("GROQ_MODEL")
+    or _cfg["groq"].get("model", "openai/gpt-oss-120b")
+)
+ENDPOINT = (
+    os.environ.get("REPHRASE_ENDPOINT")
+    or _cfg["rephrase"].get("endpoint")
+    or os.environ.get("GROQ_ENDPOINT")
+    or _cfg["groq"].get("endpoint", "https://api.groq.com/openai/v1/chat/completions")
 )
 
 DEFAULT_PROMPT = (
-    "Sen deneyimli bir T\xfcrk\xe7e/\xddngilizce edit\xf6r\xfcs\xfcn. "
-    "Verilen metni daha do\u011fal, ak\u0131c\u0131 ve profesyonel hale getirirsin. "
-    "Anlam\u0131 aynen korursun, yeni bilgi eklemezsin. "
-    "Teknik terimleri, komutlar\u0131, dosya yollar\u0131n\u0131 ve kod isimlerini de\u011fi\u015ftirme. "
-    "Metnin dilini koru: T\xfcrk\xe7e k\u0131s\u0131mlar T\xfcrk\xe7e, English parts stay in English. "
-    "Sadece yeniden yaz\u0131lm\u0131\u015f metni \xe7\u0131kt\u0131 olarak verirsin, a\xe7\u0131klama eklemezsin."
+    "You are an experienced editor. Rewrite the text to be more fluent, "
+    "natural, and concise. Remove redundancy, filler, and unnecessary "
+    "words while preserving ALL key information, data, technical terms, "
+    "commands, file paths, and code names unchanged. The output should be "
+    "substantially shorter but still complete in meaning and context. "
+    "PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output in "
+    "Turkish; if English, output in English. "
+    "Output only the rewritten text, no explanations."
 )
 SYSTEM_PROMPT = os.environ.get("REPHRASE_STYLE") or _cfg["rephrase"].get("system_prompt", DEFAULT_PROMPT)
 
-DEFAULT_USER_PROMPT = "\u015eu metni daha iyi ifade edecek \u015fekilde yeniden yaz:\n\n{text}"
+DEFAULT_USER_PROMPT = "Rewrite this text more clearly:\n\n{text}"
 USER_PROMPT = _cfg["rephrase"].get("user_prompt", DEFAULT_USER_PROMPT)
 
 
@@ -88,6 +98,10 @@ def rephrase(text: str) -> str:
     api_key = get_api_key()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
+    TPM_BUDGET = 8000
+    PROMPT_OVERHEAD = 600
+    input_tokens = len(user) // 4 + len(SYSTEM_PROMPT) // 4 + 20
+    max_out = max(512, TPM_BUDGET - input_tokens - PROMPT_OVERHEAD)
     payload = {
         "model": MODEL,
         "messages": [
@@ -95,10 +109,10 @@ def rephrase(text: str) -> str:
             {"role": "user", "content": user},
         ],
         "temperature": 0.3,
-        "max_completion_tokens": 512,
+        "max_completion_tokens": min(max_out, 4096),
     }
     if MODEL.startswith("openai/gpt-oss"):
-        payload.update({"include_reasoning": False, "reasoning_effort": "low"})
+        payload["reasoning_effort"] = "low"
     elif MODEL.startswith("qwen/"):
         payload["reasoning_effort"] = "none"
     req = urllib.request.Request(
@@ -110,7 +124,7 @@ def rephrase(text: str) -> str:
             "User-Agent": "voxtype-rephrase/1.0",
         },
     )
-    with urllib.request.urlopen(req, timeout=15.0) as response:
+    with urllib.request.urlopen(req, timeout=5.0) as response:
         data = json.loads(response.read().decode("utf-8"))
     choices = data.get("choices") or []
     output = choices[0].get("message", {}).get("content", "").strip() if choices else ""
@@ -178,8 +192,20 @@ def main() -> int:
         _notify_err("Metin bulunamad\u0131")
         return 1
 
+    if len(text) > 20000:
+        _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter, max 20000)")
+        return 1
+
     try:
         output = rephrase(text)
+    except urllib.error.HTTPError as e:
+        log(f"HTTP error: {e.code} {e.reason}")
+        if e.code == 413:
+            _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter)")
+        else:
+            _notify_err(f"HTTP {e.code}")
+        paste_text(text, wid)
+        return 1
     except Exception as e:
         log(f"API error: {e}")
         _notify_err(f"API: {type(e).__name__}")

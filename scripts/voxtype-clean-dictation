@@ -61,12 +61,14 @@ ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
 )
 
 DEFAULT_PROMPT = (
-    "Sen deneyimli bir T\xfcrk\xe7e/\xddngilizce edit\xf6r\xfcs\xfcn. "
-    "ASR/dikte \xe7\xf1kt\xf1s\xf1n\xf1 do\u011fal, k\u0131sa ve dilbilgisel olarak d\xfczg\xfcn metne \xe7evirirsin. "
-    "Kelime kelime sad\u0131k kalmazs\u0131n; konu\u015fmac\u0131n\u0131n niyetini korursun. "
-    "Bozuk ASR par\xe7alar\u0131n\u0131 d\xfczeltir veya atars\u0131n. \xc7eviri yapmazs\u0131n. "
-    "Teknik terimleri, komutlar\u0131, dosya yollar\u0131n\u0131 ve kod isimlerini de\u011fi\u015ftirme. "
-    "Sadece son metni yazars\u0131n."
+    "You are an experienced Turkish/English editor. Convert ASR/dictation "
+    "output into natural, concise, grammatically correct text. Do not be "
+    "word-for-word literal; preserve the speaker's intent. Fix or drop "
+    "garbled ASR fragments. Do not translate. Keep technical terms, "
+    "commands, file paths, and code names unchanged. "
+    "PRESERVE THE ORIGINAL LANGUAGE: Turkish input → Turkish output, "
+    "English input → English output. "
+    "Output only the cleaned text."
 )
 SYSTEM_PROMPT = _cfg["dictation"].get("system_prompt", DEFAULT_PROMPT)
 
@@ -121,11 +123,11 @@ MET\u0130N:
             {"role": "user", "content": user},
         ],
         "temperature": 0.0,
-        "max_completion_tokens": 256,
+        "max_completion_tokens": 4096,
     }
 
     if MODEL.startswith("openai/gpt-oss"):
-        payload.update({"include_reasoning": False, "reasoning_effort": "low"})
+        payload["reasoning_effort"] = "low"
     elif MODEL.startswith("qwen/"):
         payload["reasoning_effort"] = "none"
 
