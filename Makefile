@@ -7,7 +7,7 @@ install:           ## install (or upgrade) the pipeline
 	@./install.sh
 
 uninstall:         ## remove config, scripts, service
-	@./uninstall.sh
+	@./install.sh --uninstall
 
 check:             ## verify install state, no changes
 	@./install.sh --check
@@ -28,7 +28,7 @@ clean-api-key:     ## remove ~/.config/voxtype/groq-api-key
 
 # Lightweight syntax / lint sweep. install.sh is the entry point.
 lint:              ## bash -n + py_compile + sh -n sweep
-	@bash -n install.sh uninstall.sh && echo "install.sh + uninstall.sh: bash -n ok"
+	@bash -n install.sh && echo "install.sh: bash -n ok"
 	@python3 -m py_compile scripts/voxtype-clean-dictation && echo "voxtype-clean-dictation: py_compile ok"
 	@python3 -m py_compile scripts/voxtype-rephrase && echo "voxtype-rephrase: py_compile ok"
 	@sh -n scripts/voxtype-paste-active && echo "voxtype-paste-active: sh -n ok"

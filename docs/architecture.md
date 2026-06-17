@@ -29,8 +29,8 @@ recording, then release (or press again) to transcribe.
                                            ▼
                                   ┌──────────────────┐
                                   │   Groq Cloud     │
-                                  │   qwen/qwen3.6   │
-                                  │   27b (chat)     │
+                                   │   openai/gpt-oss-120b   │
+                                   │   (chat)               │
                                   └──────────────────┘
 ```
 

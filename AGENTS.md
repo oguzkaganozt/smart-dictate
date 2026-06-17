@@ -6,7 +6,7 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 
 - `./install.sh` — single bootstrap entry point. Flags: `--check` (verify), `--dry-run`, `--yes`, `--uninstall`, `--no-model`.
 - `Makefile` — aliases: `make install|uninstall|check|dry-run|status|clean-api-key|lint`.
-- `uninstall.sh` — delegates to `install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (default), `PURGE_DEB=1`.
+- `make uninstall` — delegates to `install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (default), `PURGE_DEB=1`.
 
 ## API key auth order
 
