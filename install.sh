@@ -157,6 +157,7 @@ step_apt_deps() {
     return 0
   fi
 
+  # shellcheck disable=SC2086 # intentional: word-split multi-line package list into args
   log "Missing packages:" $'\n'"$(printf '  - %s\n' $missing)"
 
   # Install the voxtype .deb first if voxtype itself is missing.
@@ -171,6 +172,7 @@ step_apt_deps() {
 
   if [[ -n "$missing" ]]; then
     log "Installing runtime dependencies via apt-get"
+    # shellcheck disable=SC2086 # intentional: word-split multi-line package list into args
     run maybe_sudo apt-get install -y $missing
   fi
 }

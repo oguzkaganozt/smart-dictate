@@ -12,6 +12,8 @@
 
 set -eu
 
+# Brief pause to let voxtype finish writing to clipboard before we read
+# window info and fire the paste keystroke.
 sleep 0.05
 
 window_id="$(xdotool getactivewindow 2>/dev/null || true)"

@@ -125,7 +125,7 @@ Check `systemctl --user status voxtype.service`.
 ## Removing it all
 
 ```bash
-./uninstall.sh
+./install.sh --uninstall
 sudo apt remove voxtype
 sudo apt autoremove
 # Optionally (DESTRUCTIVE):

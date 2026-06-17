@@ -65,7 +65,7 @@ smart-dictate/
 ├── README.md                       # this file
 ├── LICENSE                         # MIT
 ├── install.sh                      # one-shot bootstrap
-├── uninstall.sh                    # reverse of install.sh
+├── install.sh --uninstall          # reverse of install
 ├── Makefile                        # make install / uninstall / status / check
 ├── .env.example                    # GROQ_API_KEY template
 ├── config/

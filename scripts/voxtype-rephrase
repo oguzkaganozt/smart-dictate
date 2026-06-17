@@ -159,7 +159,11 @@ def _notify_err(msg: str) -> None:
         pass
 
 
-def paste_text(text: str, wid: str) -> None:
+def paste_text(text: str) -> None:
+    wid = subprocess.run(
+        ["xdotool", "getactivewindow"],
+        capture_output=True, text=True, timeout=2.0,
+    ).stdout.strip()
     subprocess.run(
         ["xclip", "-selection", "clipboard"],
         input=text.encode(), timeout=2.0,
@@ -181,12 +185,6 @@ def paste_text(text: str, wid: str) -> None:
 def main() -> int:
     log("=== start ===")
 
-    wid = subprocess.run(
-        ["xdotool", "getactivewindow"],
-        capture_output=True, text=True, timeout=2.0,
-    ).stdout.strip()
-    log(f"wid={wid}")
-
     text = get_selected_text()
     if not text:
         _notify_err("Metin bulunamad\u0131")
@@ -204,21 +202,21 @@ def main() -> int:
             _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter)")
         else:
             _notify_err(f"HTTP {e.code}")
-        paste_text(text, wid)
+        paste_text(text)
         return 1
     except Exception as e:
         log(f"API error: {e}")
         _notify_err(f"API: {type(e).__name__}")
-        paste_text(text, wid)
+        paste_text(text)
         return 1
 
     if not output:
         log("empty response")
         _notify_err("Groq yan\u0131t vermedi")
-        paste_text(text, wid)
+        paste_text(text)
         return 1
 
-    paste_text(output, wid)
+    paste_text(output)
     _notify(output)
     log("=== done ===")
     return 0

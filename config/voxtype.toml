@@ -1,5 +1,7 @@
 # VoxType configuration — deployed to ~/.config/voxtype/config.toml.
 # See https://voxtype.io for full documentation of all available options.
+# NOTE: ${HOME} references below are template variables resolved by install.sh.
+# Do not copy this file manually; always run ./install.sh to deploy it.
 
 state_file = "auto"
 

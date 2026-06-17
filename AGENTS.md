@@ -6,11 +6,11 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 
 - `./install.sh` — single bootstrap. Flags: `--check` (verify), `--dry-run`, `--yes`, `--uninstall`, `--no-model`.
 - `make install|uninstall|check|dry-run|status|clean-api-key|lint` — pass-through aliases.
-- `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (default), `PURGE_DEB=1`.
+- `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (remove model data). Defaults: model+config kept.
 
 ## API key auth order
 
-`GROQ_API_KEY` env var → `~/.config/smart-dictate/config.toml` → `~/.config/voxtype/groq-api-key` → interactive prompt (install only). Installer writes key to `~/.config/voxtype/groq-api-key` (mode 0600). Scripts also source `.env` from the repo root if `GROQ_API_KEY` is unset.
+`GROQ_API_KEY` env var → `~/.config/smart-dictate/config.toml` → `~/.config/voxtype/groq-api-key` → interactive prompt (install only). Installer writes key to `~/.config/voxtype/groq-api-key` (mode 0600). Installer also sources `.env` from the repo root if `GROQ_API_KEY` is unset (scripts themselves do not — they read env vars + config file + key file directly).
 
 ## Pipeline flow
 
@@ -36,11 +36,13 @@ Notifications are fire-and-forget (failures silently ignored).
 ## Python scripts
 
 - `scripts/voxtype-clean-dictation` — stdin/stdout LLM cleanup pipe. Called by VoxType daemon.
-- `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v`.
-- Both use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
+- `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v`. Captures active window ID inside `paste_text()` (not from `main()`) — re-reads just before paste to avoid window-switch races.
+- `scripts/voxtype-tray` — system tray indicator (GTK3 StatusIcon / Ayatana AppIndicator3).
+- `scripts/voxtype-paste-active` — shell script, X11-only (xdotool + xprop).
+- All Python scripts use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
 - Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
-- Config file `~/.config/smart-dictate/config.toml` is read at import time by both. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`) override config values at runtime.
-- `max_completion_tokens` is computed dynamically to fit within Groq free-tier 8000 TPM limit (`rephrase`:96-104). Caps at 4096, floor 512.
+- Config file `~/.config/smart-dictate/config.toml` is read at import time. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`) override config values at runtime.
+- `max_completion_tokens` is computed dynamically to fit within Groq free-tier 8000 TPM limit (`rephrase`:101-112). Caps at 4096, floor 512. Dictation script hardcodes 4096 (`clean-dictation:126`).
 
 ## Text rephrase
 
@@ -50,7 +52,7 @@ Keybinding is handled by xbindkeys (systemd user service, autostarted). GNOME cu
 
 ## Terminal detection
 
-`scripts/voxtype-paste-active:31` maintains a terminal match list (`kitty`, `alacritty`, `ghostty`, `wezterm`, `konsole`, `ptyxis`, `kgx`, `tilix`, `terminal`, `console`). Add new terminals here if they need `ctrl+shift+v` instead of `ctrl+v`.
+`scripts/voxtype-paste-active:33` maintains a terminal match list (`kitty`, `alacritty`, `ghostty`, `wezterm`, `konsole`, `ptyxis`, `kgx`, `tilix`, `terminal`, `console`). Add new terminals here if they need `ctrl+shift+v` instead of `ctrl+v`.
 
 ## Output delivery
 
@@ -64,11 +66,17 @@ Systemd drop-in `config/systemd/voxtype.service.d/gpu.conf` sets `VOXTYPE_VULKAN
 
 User must be in `input` group (hotkey evdev + modifier-release guard). Takes effect after logout/login.
 
-## Lint
+## Lint / tests
 
 ```sh
 make lint   # bash -n + py_compile + sh -n sweep
 ```
+
+No CI, no test files. `benchmark.py` at repo root is a manual tool — benchmarks model/reasoning combos against `example-phrase.md` via Groq API.
+
+## Documentation
+
+Key docs at `docs/`: `architecture.md`, `configuration.md`, `troubleshooting.md`. The shipped `config/voxtype.toml` and `config/smart-dictate.toml` are the executable source of truth for all pipeline settings.
 
 ## System tray indicator
 
