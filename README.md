@@ -1,7 +1,7 @@
-# auto-speech
+# smart-dictate
 
-Reproducible bootstrap for a local push-to-talk voice-to-text pipeline on
-Ubuntu 24.04:
+Reproducible bootstrap for a local push-to-talk voice-to-text pipeline with
+LLM text rephrasing on Ubuntu 24.04:
 
 ```
 mic  ──►  VoxType daemon  ──►  OpenAI Whisper (large-v3-turbo, Vulkan/NVIDIA)
@@ -17,11 +17,14 @@ The transcription runs entirely on your machine; only the cleanup step (a
 small, latency-bounded Groq call) touches the network. Output is auto-pasted
 into the focused window with terminal-aware shortcuts.
 
+Select any text and press Super+R to rephrase it in-place via the same Groq
+LLM — a separate shortcut for text refinement without leaving your keyboard.
+
 ## Quickstart
 
 ```bash
-git clone <this-repo> auto-speech
-cd auto-speech
+git clone <this-repo> smart-dictate
+cd smart-dictate
 
 # 1. Put your Groq API key somewhere (choose one):
 export GROQ_API_KEY="gsk_..."
@@ -39,7 +42,7 @@ cp .env.example .env && $EDITOR .env
 - install VoxType v0.7.5 (.deb) and its recommended runtime deps
 - ensure your user is in the `input` group (for hotkey + modifier-release)
 - drop the config + systemd unit + Vulkan drop-in into `~/.config/`
-- install `voxtype-clean-dictation` and `voxtype-paste-active` into `~/.local/bin/`
+- install `voxtype-clean-dictation`, `voxtype-paste-active`, and `voxtype-rephrase` into `~/.local/bin/`
 - download the `large-v3-turbo` Whisper model into `~/.local/share/voxtype/models/`
 - enable and start the user service
 
@@ -58,7 +61,7 @@ voxtype status                     # should print state (idle/recording/...)
 ## Repository layout
 
 ```
-auto-speech/
+smart-dictate/
 ├── README.md                       # this file
 ├── LICENSE                         # MIT
 ├── install.sh                      # one-shot bootstrap
@@ -73,7 +76,8 @@ auto-speech/
 │           └── gpu.conf            # VOXTYPE_VULKAN_DEVICE=nvidia drop-in
 ├── scripts/
 │   ├── voxtype-clean-dictation     # Groq LLM cleanup (post-process)
-│   └── voxtype-paste-active        # auto-paste hook (terminal-aware)
+│   ├── voxtype-paste-active        # auto-paste hook (terminal-aware)
+│   └── voxtype-rephrase            # Groq LLM text rephrase (selection)
 └── docs/
     ├── architecture.md
     ├── configuration.md

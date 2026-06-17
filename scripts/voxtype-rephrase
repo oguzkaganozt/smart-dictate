@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+voxtype-rephrase: rephrase selected text using Groq LLM.
+
+Reads selected text from PRIMARY selection (xclip), sends to Groq for
+rephrasing, and replaces the selection with the rephrased version via
+clipboard + xdotool paste.
+
+Usage:
+  Bind to a hotkey in your compositor. Select text, press hotkey.
+
+Config precedence (highest first):
+- Env var (GROQ_MODEL, GROQ_ENDPOINT, REPHRASE_STYLE)
+- ~/.config/smart-dictate/config.toml
+- Script defaults
+"""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+
+CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
+KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
+
+
+def _load_config() -> dict:
+    cfg = {"groq": {}, "rephrase": {}}
+    if CONFIG_PATH.exists():
+        try:
+            import tomllib
+            with open(CONFIG_PATH, "rb") as f:
+                data = tomllib.load(f)
+            if "groq" in data:
+                cfg["groq"] = data["groq"]
+            if "rephrase" in data:
+                cfg["rephrase"] = data["rephrase"]
+        except Exception:
+            pass
+    return cfg
+
+
+_cfg = _load_config()
+
+MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "openai/gpt-oss-120b")
+ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
+    "endpoint", "https://api.groq.com/openai/v1/chat/completions"
+)
+
+DEFAULT_PROMPT = (
+    "Sen deneyimli bir T\xfcrk\xe7e/\xddngilizce edit\xf6r\xfcs\xfcn. "
+    "Verilen metni daha do\u011fal, ak\u0131c\u0131 ve profesyonel hale getirirsin. "
+    "Anlam\u0131 aynen korursun, yeni bilgi eklemezsin. "
+    "Teknik terimleri, komutlar\u0131, dosya yollar\u0131n\u0131 ve kod isimlerini de\u011fi\u015ftirme. "
+    "Metnin dilini koru: T\xfcrk\xe7e k\u0131s\u0131mlar T\xfcrk\xe7e, English parts stay in English. "
+    "Sadece yeniden yaz\u0131lm\u0131\u015f metni \xe7\u0131kt\u0131 olarak verirsin, a\xe7\u0131klama eklemezsin."
+)
+SYSTEM_PROMPT = os.environ.get("REPHRASE_STYLE") or _cfg["rephrase"].get("system_prompt", DEFAULT_PROMPT)
+
+DEFAULT_USER_PROMPT = "\u015eu metni daha iyi ifade edecek \u015fekilde yeniden yaz:\n\n{text}"
+USER_PROMPT = _cfg["rephrase"].get("user_prompt", DEFAULT_USER_PROMPT)
+
+
+def get_selected_text() -> str:
+    result = subprocess.run(
+        ["xclip", "-o", "-selection", "primary"],
+        capture_output=True, text=True, timeout=2.0,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return ""
+
+
+def should_skip(text: str) -> bool:
+    if not text:
+        return True
+    if len(text) < 40:
+        return True
+    code_markers = ["&&", "||", "sudo ", "git ", "docker ",
+                    "systemctl ", "journalctl ", "~/", "./", "--"]
+    lowered = text.lower()
+    if any(marker in lowered for marker in code_markers):
+        return True
+    return False
+
+
+def get_api_key() -> str:
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        return key
+    key = _cfg["groq"].get("api_key", "")
+    if key:
+        return key
+    if KEY_FILE.exists():
+        return KEY_FILE.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def rephrase(text: str) -> str:
+    user = USER_PROMPT.format(text=text)
+
+    api_key = get_api_key()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.3,
+        "max_completion_tokens": 512,
+    }
+
+    if MODEL.startswith("openai/gpt-oss"):
+        payload.update({"include_reasoning": False, "reasoning_effort": "low"})
+    elif MODEL.startswith("qwen/"):
+        payload["reasoning_effort"] = "none"
+
+    req = urllib.request.Request(
+        ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "voxtype-rephrase/1.0",
+        },
+    )
+
+    with urllib.request.urlopen(req, timeout=15.0) as response:
+        data = json.loads(response.read().decode("utf-8"))
+
+    choices = data.get("choices") or []
+    output = choices[0].get("message", {}).get("content", "").strip() if choices else ""
+    output = output.strip('"').strip()
+    return output
+
+
+def _is_terminal(wid: str) -> bool:
+    try:
+        wclass = subprocess.run(
+            ["xdotool", "getwindowclassname", wid],
+            capture_output=True, text=True, timeout=2.0,
+        ).stdout.strip().lower()
+        wprop = subprocess.run(
+            ["xprop", "-id", wid, "WM_CLASS"],
+            capture_output=True, text=True, timeout=2.0,
+        ).stdout.lower()
+        targets = "terminal console ptyxis kgx konsole tilix kitty alacritty wezterm ghostty"
+        for t in targets.split():
+            if t in wclass or t in wprop:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def paste_text(text: str, target_wid: str = "") -> None:
+    if target_wid:
+        subprocess.run(
+            ["xdotool", "windowactivate", "--sync", target_wid],
+            capture_output=True, timeout=2.0,
+        )
+    time.sleep(0.1)
+    is_term = _is_terminal(target_wid) if target_wid else False
+    paste_key = "ctrl+shift+v" if is_term else "ctrl+v"
+    proc = subprocess.Popen(
+        ["xclip", "-selection", "clipboard", "-l", "2"],
+        stdin=subprocess.PIPE, text=True,
+    )
+    proc.stdin.write(text)
+    proc.stdin.close()
+    time.sleep(0.15)
+    subprocess.run(["xdotool", "key", "--clearmodifiers", paste_key], timeout=5.0)
+    try:
+        proc.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def main() -> int:
+    text = get_selected_text()
+    if not text:
+        return 1
+
+    target_wid = subprocess.run(
+        ["xdotool", "getactivewindow"],
+        capture_output=True, text=True, timeout=2.0,
+    ).stdout.strip()
+
+    if should_skip(text):
+        return 0
+
+    try:
+        output = rephrase(text)
+    except (TimeoutError, RuntimeError, urllib.error.URLError, json.JSONDecodeError, OSError):
+        return 1
+
+    if not output:
+        return 1
+
+    paste_text(output, target_wid)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

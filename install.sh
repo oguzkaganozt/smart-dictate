@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — bootstrap the auto-speech pipeline on Ubuntu 24.04+.
+# install.sh — bootstrap the smart-dictate pipeline on Ubuntu 24.04+.
 #
 # Idempotent: re-running skips steps that already succeeded.
 #
@@ -22,10 +22,12 @@ set -Eeuo pipefail
 # ---------- paths ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 CONFIG_SRC="$SCRIPT_DIR/config/voxtype.toml"
+SMART_DICTATE_CONFIG_SRC="$SCRIPT_DIR/config/smart-dictate.toml"
 SYSTEMD_DIR="$SCRIPT_DIR/config/systemd"
 SCRIPT_SRC_DIR="$SCRIPT_DIR/scripts"
 
 VOXTYPE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/config.toml"
+SMART_DICTATE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate/config.toml"
 VOXTYPE_KEY_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/groq-api-key"
 SYSTEMD_DST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SCRIPT_DST_DIR="${XDG_LOCAL_BIN:-$HOME/.local/bin}"
@@ -205,6 +207,14 @@ step_config() {
   fi
 }
 
+step_smart_dictate_config() {
+  log "Deploying smart-dictate config: $SMART_DICTATE_CONFIG_DST"
+  run mkdir -p "$(dirname "$SMART_DICTATE_CONFIG_DST")"
+  if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
+    install -m 0644 "$SMART_DICTATE_CONFIG_SRC" "$SMART_DICTATE_CONFIG_DST"
+  fi
+}
+
 step_scripts() {
   log "Installing scripts to $SCRIPT_DST_DIR/"
   run mkdir -p "$SCRIPT_DST_DIR"
@@ -213,6 +223,8 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-clean-dictation"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-paste-active" \
       "$SCRIPT_DST_DIR/voxtype-paste-active"
+    install -m 0755 "$SCRIPT_SRC_DIR/voxtype-rephrase" \
+      "$SCRIPT_DST_DIR/voxtype-rephrase"
   fi
 }
 
@@ -306,11 +318,21 @@ verify() {
   else
     err "script:   $SCRIPT_DST_DIR/voxtype-paste-active MISSING"; fail=1
   fi
+  if [[ -x "$SCRIPT_DST_DIR/voxtype-rephrase" ]]; then
+    ok "script:   $SCRIPT_DST_DIR/voxtype-rephrase"
+  else
+    err "script:   $SCRIPT_DST_DIR/voxtype-rephrase MISSING"; fail=1
+  fi
 
   if [[ -f "$VOXTYPE_CONFIG_DST" ]]; then
     ok "config:   $VOXTYPE_CONFIG_DST"
   else
     err "config:   $VOXTYPE_CONFIG_DST MISSING"; fail=1
+  fi
+  if [[ -f "$SMART_DICTATE_CONFIG_DST" ]]; then
+    ok "config:   $SMART_DICTATE_CONFIG_DST"
+  else
+    err "config:   $SMART_DICTATE_CONFIG_DST MISSING"; fail=1
   fi
 
   if [[ -f "$SYSTEMD_DST_DIR/voxtype.service" ]]; then
@@ -363,11 +385,13 @@ do_uninstall() {
   rm -rf "$SYSTEMD_DST_DIR/voxtype.service.d"
   rm -f  "$SCRIPT_DST_DIR/voxtype-clean-dictation"
   rm -f  "$SCRIPT_DST_DIR/voxtype-paste-active"
+  rm -f  "$SCRIPT_DST_DIR/voxtype-rephrase"
 
   if [[ "${KEEP_CONFIG:-0}" != "1" ]]; then
     rm -f "$VOXTYPE_CONFIG_DST"
+    rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
   else
-    warn "KEEP_CONFIG=1: leaving $VOXTYPE_CONFIG_DST"
+    warn "KEEP_CONFIG=1: leaving voxtype config + smart-dictate config"
   fi
 
   if [[ "${KEEP_MODEL:-0}" != "1" ]]; then
@@ -387,6 +411,7 @@ case "$MODE" in
     step_apt_deps
     step_input_group
     step_config
+    step_smart_dictate_config
     step_scripts
     step_api_key
     step_model
@@ -400,6 +425,7 @@ case "$MODE" in
     step_apt_deps
     step_input_group
     step_config
+    step_smart_dictate_config
     step_scripts
     step_api_key
     step_model

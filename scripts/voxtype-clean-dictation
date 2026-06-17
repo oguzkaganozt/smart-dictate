@@ -13,13 +13,15 @@ Behavior:
 - On any failure (timeout, HTTP error, parse error, oversized output),
   the original text is emitted unchanged so the daemon never blocks.
 
-Auth:
-- Reads GROQ_API_KEY from env, or from ~/.config/voxtype/groq-api-key
-  if it exists.
+Auth (highest priority first):
+- GROQ_API_KEY env var
+- ~/.config/smart-dictate/config.toml → [groq] → api_key
+- ~/.config/voxtype/groq-api-key file
 
-Overrides (env):
-- GROQ_MODEL     default: qwen/qwen3.6-27b
-- GROQ_ENDPOINT  default: https://api.groq.com/openai/v1/chat/completions
+Config precedence (highest first):
+- Env var (GROQ_MODEL, GROQ_ENDPOINT)
+- ~/.config/smart-dictate/config.toml
+- Script defaults
 """
 import json
 import os
@@ -30,11 +32,42 @@ import urllib.error
 import urllib.request
 
 
-MODEL = os.environ.get("GROQ_MODEL", "qwen/qwen3.6-27b")
-ENDPOINT = os.environ.get(
-    "GROQ_ENDPOINT", "https://api.groq.com/openai/v1/chat/completions"
-)
+CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
+
+
+def _load_config() -> dict:
+    cfg = {"groq": {}, "dictation": {}}
+    if CONFIG_PATH.exists():
+        try:
+            import tomllib
+            with open(CONFIG_PATH, "rb") as f:
+                data = tomllib.load(f)
+            if "groq" in data:
+                cfg["groq"] = data["groq"]
+            if "dictation" in data:
+                cfg["dictation"] = data["dictation"]
+        except Exception:
+            pass
+    return cfg
+
+
+_cfg = _load_config()
+
+MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "openai/gpt-oss-120b")
+ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
+    "endpoint", "https://api.groq.com/openai/v1/chat/completions"
+)
+
+DEFAULT_PROMPT = (
+    "Sen deneyimli bir T\xfcrk\xe7e/\xddngilizce edit\xf6r\xfcs\xfcn. "
+    "ASR/dikte \xe7\xf1kt\xf1s\xf1n\xf1 do\u011fal, k\u0131sa ve dilbilgisel olarak d\xfczg\xfcn metne \xe7evirirsin. "
+    "Kelime kelime sad\u0131k kalmazs\u0131n; konu\u015fmac\u0131n\u0131n niyetini korursun. "
+    "Bozuk ASR par\xe7alar\u0131n\u0131 d\xfczeltir veya atars\u0131n. \xc7eviri yapmazs\u0131n. "
+    "Teknik terimleri, komutlar\u0131, dosya yollar\u0131n\u0131 ve kod isimlerini de\u011fi\u015ftirme. "
+    "Sadece son metni yazars\u0131n."
+)
+SYSTEM_PROMPT = _cfg["dictation"].get("system_prompt", DEFAULT_PROMPT)
 
 
 def should_skip(text: str) -> bool:
@@ -42,7 +75,6 @@ def should_skip(text: str) -> bool:
     if len(text) < 90 and len(words) < 14:
         return True
 
-    # Avoid rewriting likely shell/code snippets.
     code_markers = ["&&", "||", "sudo ", "git ", "docker ", "systemctl ", "journalctl ", "~/", "./", "--"]
     lowered = text.lower()
     if any(marker in lowered for marker in code_markers):
@@ -51,30 +83,33 @@ def should_skip(text: str) -> bool:
     return False
 
 
-def clean(text: str) -> str:
-    system = (
-        "Sen deneyimli bir Türkçe/İngilizce editörüsün. "
-        "ASR/dikte çıktısını doğal, kısa ve dilbilgisel olarak düzgün metne çevirirsin. "
-        "Kelime kelime sadık kalmazsın; konuşmacının niyetini korursun. "
-        "Bozuk ASR parçalarını düzeltir veya atarsın. Çeviri yapmazsın. "
-        "Teknik terimleri, komutları, dosya yollarını ve kod isimlerini değiştirme. "
-        "Sadece son metni yazarsın."
-    )
-    user = f"""Kurallar:
-- Düzgün, doğal ve okunabilir yaz.
-- Metnin dilini koru: Türkçe parçalar Türkçe, English parts stay in English.
-- "çalışıyor değil" gibi ifadeleri "çalışmıyor" gibi doğal hale getir.
-- "emin miyseniz emin miyiz çalışıyor mu diye" gibi bozuk parçaları "çalışıp çalışmadığından emin değilim" gibi doğal hale getir.
-- "letmiyordur" gibi anlamsız ASR kelimelerini bağlama göre düzelt.
-- Gereksiz tekrarları ve dolgu ifadelerini sil.
-- Yeni bilgi ekleme; belirsiz yerde en olası anlamı seç.
+def get_api_key() -> str:
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        return key
+    key = _cfg["groq"].get("api_key", "")
+    if key:
+        return key
+    if KEY_FILE.exists():
+        return KEY_FILE.read_text(encoding="utf-8").strip()
+    return ""
 
-METİN:
+
+def clean(text: str) -> str:
+    system = SYSTEM_PROMPT
+    user = f"""Kurallar:
+- D\xfczg\xfcn, do\u011fal ve okunabilir yaz.
+- Metnin dilini koru: T\xfcrk\xe7e par\xe7alar T\xfcrk\xe7e, English parts stay in English.
+- "\xe7al\u0131\u015f\u0131yor de\u011fil" gibi ifadeleri "\xe7al\u0131\u015fm\u0131yor" gibi do\u011fal hale getir.
+- "emin miyseniz emin miyiz \xe7al\u0131\u015f\u0131yor mu diye" gibi bozuk par\xe7alar\u0131 "\xe7al\u0131\u015f\u0131p \xe7al\u0131\u015fmad\u0131\u011f\u0131ndan emin de\u011filim" gibi do\u011fal hale getir.
+- "letmiyordur" gibi anlams\u0131z ASR kelimelerini ba\u011flama g\xf6re d\xfczelt.
+- Gereksiz tekrarlar\u0131 ve dolgu ifadelerini sil.
+- Yeni bilgi ekleme; belirsiz yerde en olas\u0131 anlam\u0131 se\xe7.
+
+MET\u0130N:
 {text}"""
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key and KEY_FILE.exists():
-        api_key = KEY_FILE.read_text(encoding="utf-8").strip()
+    api_key = get_api_key()
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
 
@@ -130,7 +165,6 @@ def main() -> int:
         sys.stdout.write(original)
         return 0
 
-    # If the model ignored the instruction and expanded heavily, prefer safety.
     if len(output) > max(len(text) * 1.5, len(text) + 120):
         sys.stdout.write(original)
         return 0

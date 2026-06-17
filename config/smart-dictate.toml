@@ -1,0 +1,42 @@
+# smart-dictate configuration
+#
+# Deployed to ~/.config/smart-dictate/config.toml by install.sh.
+# Env vars (GROQ_MODEL, GROQ_ENDPOINT, GROQ_API_KEY, REPHRASE_STYLE)
+# override the values below at runtime.
+
+[groq]
+# LLM model to use for both dictation cleanup and text rephrasing.
+# Groq examples: openai/gpt-oss-120b, qwen/qwen3.6-27b, llama-3.3-70b-versatile
+model = "openai/gpt-oss-120b"
+
+# API endpoint (change to use a different provider with OpenAI-compatible API)
+endpoint = "https://api.groq.com/openai/v1/chat/completions"
+
+# API key (optional — falls back to GROQ_API_KEY env var,
+# then to ~/.config/voxtype/groq-api-key)
+# api_key = "gsk_..."
+
+[dictation]
+# System prompt for ASR dictation cleanup (voxtype-clean-dictation)
+system_prompt = """Sen deneyimli bir Türkçe/İngilizce editörüsün.
+ASR/dikte çıktısını doğal, kısa ve dilbilgisel olarak düzgün metne çevirirsin.
+Kelime kelime sadık kalmazsın; konuşmacının niyetini korursun.
+Bozuk ASR parçalarını düzeltir veya atarsın. Çeviri yapmazsın.
+Teknik terimleri, komutları, dosya yollarını ve kod isimlerini değiştirme.
+Sadece son metni yazarsın."""
+
+[rephrase]
+# System prompt for text rephrasing (voxtype-rephrase)
+# Override at runtime with REPHRASE_STYLE env var
+system_prompt = """Sen deneyimli bir Türkçe/İngilizce editörüsün.
+Verilen metni daha doğal, akıcı ve profesyonel hale getirirsin.
+Anlamı aynen korursun, yeni bilgi eklemezsin.
+Teknik terimleri, komutları, dosya yollarını ve kod isimlerini değiştirme.
+Metnin dilini koru: Türkçe kısımlar Türkçe, English parts stay in English.
+Sadece yeniden yazılmış metni çıktı olarak verirsin, açıklama eklemezsin."""
+
+# User prompt template for text rephrasing.
+# {text} is replaced with the selected text.
+# user_prompt = """Şu metni daha iyi ifade edecek şekilde yeniden yaz:
+
+# {text}"""
