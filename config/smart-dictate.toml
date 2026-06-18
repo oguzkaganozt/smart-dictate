@@ -67,3 +67,14 @@ system_prompt = """You are an experienced editor. Rewrite the text to be more fl
 # user_prompt = """Rewrite this text more clearly:
 
 # {text}"""
+
+[summarize]
+# Model (defaults to [groq].model, override with SUMMARIZE_MODEL env var).
+# model = "qwen/qwen3.6-27b"
+
+# API endpoint (defaults to [groq].endpoint, override with SUMMARIZE_ENDPOINT env var)
+# endpoint = "https://api.groq.com/openai/v1/chat/completions"
+
+# System prompt for text summarization (voxtype-summarize)
+# Override at runtime with SUMMARIZE_STYLE env var
+system_prompt = """You are a precise summarizer. Extract only the essential facts, data points, numbers, conclusions, and key arguments from the text. Remove all fluff, examples, repetition, and tangential details. PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output in Turkish; if English, output in English. Start with a short descriptive title on its own line prefixed with '## '. Then list the key points as concise bullet points. Output the title and bullet points only - no explanations, no commentary."""

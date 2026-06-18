@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
+KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
+LOG = Path("/tmp") / "voxtype-summarize.log"
+MAX_INPUT = 30000
+
+
+def log(msg: str) -> None:
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
+def _load_config() -> dict:
+    cfg = {"groq": {}, "summarize": {}}
+    if CONFIG_PATH.exists():
+        try:
+            import tomllib
+            with open(CONFIG_PATH, "rb") as f:
+                data = tomllib.load(f)
+            if "groq" in data:
+                cfg["groq"] = data["groq"]
+            if "summarize" in data:
+                cfg["summarize"] = data["summarize"]
+        except Exception:
+            pass
+    return cfg
+
+
+_cfg = _load_config()
+
+MODEL = (
+    os.environ.get("SUMMARIZE_MODEL")
+    or _cfg["summarize"].get("model")
+    or os.environ.get("GROQ_MODEL")
+    or _cfg["groq"].get("model", "qwen/qwen3.6-27b")
+)
+ENDPOINT = (
+    os.environ.get("SUMMARIZE_ENDPOINT")
+    or _cfg["summarize"].get("endpoint")
+    or os.environ.get("GROQ_ENDPOINT")
+    or _cfg["groq"].get("endpoint", "https://api.groq.com/openai/v1/chat/completions")
+)
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a ruthless summarizer. Condense the text to its absolute "
+    "essence — only key facts, numbers, and conclusions. "
+    "Eliminate all examples, explanations, context, and repetition. "
+    "Each bullet must be a single short phrase or sentence, max 15 words. "
+    "Output at most 6 bullet points, preferably fewer. "
+    "PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output "
+    "in Turkish; if English, output in English. "
+    "Start with a short descriptive title (max 6 words) on its own line "
+    "prefixed with '## '. "
+    "Output the title and bullet points only — "
+    "no introductions, no commentary, no closing."
+)
+SYSTEM_PROMPT = (
+    os.environ.get("SUMMARIZE_STYLE")
+    or _cfg["summarize"].get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+)
+
+
+def get_selected_text() -> str:
+    for sel in ["primary", "clipboard"]:
+        result = subprocess.run(
+            ["xclip", "-o", "-selection", sel],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            log(f"read from {sel}: {len(result.stdout.strip())} chars")
+            return result.stdout.strip()
+    log("no text found in PRIMARY or CLIPBOARD")
+    return ""
+
+
+def get_api_key() -> str:
+    key = os.environ.get("GROQ_API_KEY")
+    if key:
+        return key
+    key = _cfg["groq"].get("api_key", "")
+    if key:
+        return key
+    if KEY_FILE.exists():
+        return KEY_FILE.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def summarize(text: str) -> str:
+    api_key = get_api_key()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+    TPM_BUDGET = 8000
+    PROMPT_OVERHEAD = 600
+    input_tokens = len(text) // 4 + len(SYSTEM_PROMPT) // 4 + 20
+    max_out = max(512, TPM_BUDGET - input_tokens - PROMPT_OVERHEAD)
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0.15,
+        "max_completion_tokens": min(max_out, 4096),
+    }
+    if MODEL.startswith("openai/gpt-oss"):
+        payload["reasoning_effort"] = "low"
+    elif MODEL.startswith("qwen/"):
+        payload["reasoning_effort"] = "none"
+    req = urllib.request.Request(
+        ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "voxtype-summarize/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10.0) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    choices = data.get("choices") or []
+    output = choices[0].get("message", {}).get("content", "").strip() if choices else ""
+    output = output.strip('"').strip()
+    log(f"summarize output: {len(output)} chars")
+    return output
+
+
+def get_mouse_position() -> tuple[int, int]:
+    result = subprocess.run(
+        ["xdotool", "getmouselocation"],
+        capture_output=True, text=True, timeout=2.0,
+    )
+    x, y = 0, 0
+    for part in result.stdout.strip().split():
+        if part.startswith("x:"):
+            x = int(part[2:])
+        elif part.startswith("y:"):
+            y = int(part[2:])
+    return x, y
+
+
+MD_RE = re.compile(r'\*\*(.+?)\*\*|`([^`]+)`|\*(.+?)\*')
+
+
+def _insert_md(
+    buffer: "GtkTextBuffer",
+    it: "GtkTextIter",
+    text: str,
+    base_tag: "GtkTextTag",
+    bold_tag: "GtkTextTag",
+    code_tag: "GtkTextTag",
+    italic_tag: "GtkTextTag",
+) -> None:
+    """Insert text with inline markdown support: **bold**, *italic*, `code`."""
+    pos = 0
+    for m in MD_RE.finditer(text):
+        if m.start() > pos:
+            buffer.insert_with_tags(it, text[pos : m.start()], base_tag)
+        if m.group(1) is not None:
+            buffer.insert_with_tags(it, m.group(1), bold_tag)
+        elif m.group(2) is not None:
+            buffer.insert_with_tags(it, m.group(2), code_tag)
+        elif m.group(3) is not None:
+            buffer.insert_with_tags(it, m.group(3), italic_tag)
+        pos = m.end()
+    if pos < len(text):
+        buffer.insert_with_tags(it, text[pos:], base_tag)
+
+
+def _build_buffer(buffer: "GtkTextBuffer", text: str) -> None:
+    from gi.repository import Pango
+
+    font_desc = Pango.FontDescription()
+    font_desc.set_family("Cantarell, Segoe UI, sans-serif")
+    font_desc.set_size(13 * Pango.SCALE)
+
+    heading_tag = buffer.create_tag(
+        "heading",
+        font_desc=font_desc,
+        weight=Pango.Weight.BOLD,
+        scale=1.15,
+        foreground="#111827",
+        pixels_above_lines=6,
+        pixels_below_lines=2,
+    )
+    body_tag = buffer.create_tag(
+        "body",
+        font_desc=font_desc,
+        foreground="#4b5563",
+        pixels_above_lines=2,
+        pixels_below_lines=2,
+    )
+    bullet_tag = buffer.create_tag(
+        "bullet",
+        font_desc=font_desc,
+        foreground="#4b5563",
+        pixels_above_lines=2,
+        pixels_below_lines=2,
+        left_margin=22,
+    )
+    bullet_marker_tag = buffer.create_tag(
+        "bullet_marker",
+        font_desc=font_desc,
+        foreground="#9ca3af",
+    )
+    bold_tag = buffer.create_tag(
+        "bold",
+        weight=Pango.Weight.BOLD,
+        foreground="#111827",
+    )
+    code_tag = buffer.create_tag(
+        "code",
+        family="monospace",
+        size=12 * Pango.SCALE,
+        foreground="#d14",
+        background="#f5f5f5",
+    )
+    italic_tag = buffer.create_tag(
+        "italic",
+        style=Pango.Style.ITALIC,
+    )
+
+    it = buffer.get_end_iter()
+    for raw in text.split("\n"):
+        s = raw.strip()
+        if not s:
+            continue
+        if len(s) >= 2 and s.startswith("## "):
+            # Heading — no inline markdown (already bold)
+            buffer.insert_with_tags(it, s[3:], heading_tag)
+        elif (
+            len(s) >= 2
+            and s[0] in ("*", "-", "\u2022", "\u25b8")
+            and s[1] == " "
+        ):
+            content = s[2:].lstrip()
+            buffer.insert(it, "  ")
+            buffer.insert_with_tags(it, "\u25b8", bullet_marker_tag)
+            buffer.insert(it, "  ")
+            _insert_md(buffer, it, content, bullet_tag, bold_tag, code_tag, italic_tag)
+        else:
+            _insert_md(buffer, it, s, body_tag, bold_tag, code_tag, italic_tag)
+        buffer.insert(it, "\n")
+
+
+def show_popup(text: str) -> None:
+    mouse_x, mouse_y = get_mouse_position()
+    log(f"mouse at {mouse_x},{mouse_y}")
+
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, GLib, Gdk, Pango
+
+    PAD = 8
+    ACCENT_W = 4
+    CHARS_PER_LINE = 55
+
+    css = b"""
+    .card {
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+    }
+    .accent {
+        background-color: #d1d5db;
+    }
+    textview, textview text,
+    scrolledwindow, scrolledwindow viewport,
+    viewport {
+        background-color: transparent;
+    }
+    """
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+    # Estimate dynamic size (account for existing newlines + line wrapping)
+    line_height = 26
+    raw_lines = text.split("\n")
+    num_lines = max(text.count("\n") + 1,
+                    sum(max(1, len(l) // CHARS_PER_LINE) for l in raw_lines))
+    content_w = min(max(400, CHARS_PER_LINE * 7 + 28), 580)
+    content_h = min(num_lines * line_height + 40, 400)
+    total_w = content_w + ACCENT_W + 2
+    total_h = content_h + 24
+
+    win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+    win.set_default_size(total_w, total_h)
+    win.set_decorated(False)
+    win.set_keep_above(True)
+    win.set_resizable(False)
+    win.set_app_paintable(True)
+
+    visual = win.get_screen().get_rgba_visual()
+    if visual is not None:
+        win.set_visual(visual)
+
+    display = Gdk.Display.get_default()
+    monitor = display.get_monitor_at_point(mouse_x, mouse_y)
+    geo = monitor.get_geometry()
+    sw, sh = geo.width, geo.height
+
+    x = mouse_x + 4
+    y = mouse_y + 18
+    if x + total_w > sw:
+        x = mouse_x - total_w - 4
+    if y + total_h > sh:
+        y = mouse_y - total_h - 4
+    x = max(PAD, min(x, sw - total_w - PAD))
+    y = max(PAD, min(y, sh - total_h - PAD))
+    win.move(int(x), int(y))
+
+    # --- Widget hierarchy ---
+    # Gtk.Window (transparent)
+    #   └── Gtk.EventBox (.card)       ← white bg, border, radius
+    #       └── Gtk.Box (horizontal)
+    #           ├── Gtk.EventBox (.accent)  ← 4px gray bar, full height
+    #           └── Gtk.ScrolledWindow
+    #               └── Gtk.TextView     ← transparent, margins, tags
+
+    card = Gtk.EventBox()
+    card.get_style_context().add_class("card")
+
+    hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+
+    accent = Gtk.EventBox()
+    accent.set_size_request(ACCENT_W, -1)
+    accent.get_style_context().add_class("accent")
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.set_propagate_natural_height(True)
+
+    text_view = Gtk.TextView()
+    text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+    text_view.set_editable(False)
+    text_view.set_cursor_visible(False)
+    text_view.set_margin_start(12)
+    text_view.set_margin_end(16)
+    text_view.set_margin_top(12)
+    text_view.set_margin_bottom(14)
+
+    _build_buffer(text_view.get_buffer(), text)
+
+    scrolled.add(text_view)
+    hbox.pack_start(accent, False, False, 0)
+    hbox.pack_start(scrolled, True, True, 0)
+    card.add(hbox)
+    win.add(card)
+
+    def _on_key(w, ev):
+        if ev.keyval in (Gdk.KEY_Escape, Gdk.KEY_q, Gdk.KEY_Q):
+            Gtk.main_quit()
+            return True
+        return False
+
+    win.connect("key-press-event", _on_key)
+    win.connect("destroy", lambda _: Gtk.main_quit())
+
+    win.show_all()
+    win.present()
+
+    GLib.timeout_add_seconds(30, Gtk.main_quit)
+    Gtk.main()
+
+
+def _notify_err(msg: str) -> None:
+    try:
+        subprocess.run(
+            ["notify-send", "--icon=dialog-error",
+             "--app-name=smart-dictate", "\xd6zet Hatas\u0131", msg],
+            timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def _notify_start() -> None:
+    try:
+        subprocess.run(
+            ["notify-send", "--icon=accessories-text-editor",
+             "--app-name=smart-dictate", "\xd6zetleniyor...",
+             "Se\xe7ili metin \xf6zetleniyor"],
+            timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def _notify_done(text: str) -> None:
+    MAX_LEN = 100
+    body = text[:MAX_LEN].replace("\n", " ").strip()
+    if len(text) > MAX_LEN:
+        body += "..."
+    try:
+        subprocess.run(
+            ["notify-send", "--icon=accessories-text-editor",
+             "--app-name=smart-dictate", "\xd6zet", body],
+            timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
+def main() -> int:
+    log("=== start ===")
+    _notify_start()
+
+    text = get_selected_text()
+    if not text:
+        _notify_err("Metin bulunamad\u0131")
+        return 1
+
+    if len(text) > MAX_INPUT:
+        _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter, max {MAX_INPUT})")
+        return 1
+
+    try:
+        output = summarize(text)
+    except urllib.error.HTTPError as e:
+        log(f"HTTP error: {e.code} {e.reason}")
+        _notify_err(f"HTTP {e.code}")
+        return 1
+    except Exception as e:
+        log(f"API error: {e}")
+        _notify_err(f"API: {type(e).__name__}")
+        return 1
+
+    if not output:
+        log("empty response")
+        _notify_err("Groq yan\u0131t vermedi")
+        return 1
+
+    _notify_done(output)
+    show_popup(output)
+    log("=== done ===")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

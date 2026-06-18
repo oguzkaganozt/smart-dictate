@@ -31,6 +31,7 @@ lint:              ## bash -n + py_compile + sh -n sweep
 	@bash -n install.sh && echo "install.sh: bash -n ok"
 	@python3 -m py_compile scripts/voxtype-clean-dictation && echo "voxtype-clean-dictation: py_compile ok"
 	@python3 -m py_compile scripts/voxtype-rephrase && echo "voxtype-rephrase: py_compile ok"
+	@python3 -m py_compile scripts/voxtype-summarize && echo "voxtype-summarize: py_compile ok"
 	@python3 -m py_compile scripts/voxtype-tray && echo "voxtype-tray: py_compile ok"
 	@sh -n scripts/voxtype-paste-active && echo "voxtype-paste-active: sh -n ok"
 

@@ -29,6 +29,7 @@ Voxtype's built-in `on_transcription` notification is **disabled**
 |--------|--------|------|---------|
 | Dictation | `voxtype-clean-dictation` | `audio-input-microphone` | "Dikte edildi" |
 | Rephrase | `voxtype-rephrase` | `edit-paste` | "Düzeltildi" |
+| Summarize | `voxtype-summarize` | `accessories-text-editor` | "Özetleniyor..." (start) + "Özet" (done) + GTK popup |
 
 Both show the first ~100 chars of the output text as the notification body.
 Notifications are fire-and-forget (failures silently ignored).
@@ -37,16 +38,21 @@ Notifications are fire-and-forget (failures silently ignored).
 
 - `scripts/voxtype-clean-dictation` — stdin/stdout LLM cleanup pipe. Called by VoxType daemon.
 - `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v`. Captures active window ID inside `paste_text()` (not from `main()`) — re-reads just before paste to avoid window-switch races.
+- `scripts/voxtype-summarize` — reads PRIMARY/CLIPBOARD selection via xclip, summarizes via Groq (temp 0.15, no reasoning), shows GTK3 popup near mouse cursor. Auto-closes after 30s or on click/Escape/q.
 - `scripts/voxtype-tray` — system tray indicator (GTK3 StatusIcon / Ayatana AppIndicator3).
 - `scripts/voxtype-paste-active` — shell script, X11-only (xdotool + xprop).
 - All Python scripts use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
 - Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
-- Config file `~/.config/smart-dictate/config.toml` is read at import time. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`) override config values at runtime.
+- Config file `~/.config/smart-dictate/config.toml` is read at import time. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`, `SUMMARIZE_MODEL`, `SUMMARIZE_ENDPOINT`, `SUMMARIZE_STYLE`) override config values at runtime.
 - `max_completion_tokens` is computed dynamically to fit within Groq free-tier 8000 TPM limit (`rephrase`:101-112). Caps at 4096, floor 512. Dictation script hardcodes 4096 (`clean-dictation:126`).
 
 ## Text rephrase
 
 `voxtype-rephrase` — binds to **Ctrl+Alt+R** (via xbindkeys). Reads PRIMARY/CLIPBOARD selection, rewrites via Groq (5s timeout, temp 0.3, max 20000 chars input), pastes via `xdotool key ctrl+v`. Shows "Düzeltildi" notification on success. System prompt overridable via `REPHRASE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[rephrase].model` or `REPHRASE_MODEL`).
+
+## Text summarize
+
+`voxtype-summarize` — binds to **Ctrl+Alt+S** (via xbindkeys only — GNOME shortcut intentionally skipped to avoid the settings daemon grabbing the key). Reads PRIMARY/CLIPBOARD selection, summarizes via Groq (10s timeout, temp 0.15, max 30000 chars input), shows "Özetleniyor..." notification on start + GTK3 popup near mouse cursor with result. Auto-closes popup after 30s or on click/Escape/q. System prompt overridable via `SUMMARIZE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[summarize].model` or `SUMMARIZE_MODEL`).
 
 Keybinding is handled by xbindkeys (systemd user service, autostarted). GNOME custom shortcut is also set during install for fallback.
 

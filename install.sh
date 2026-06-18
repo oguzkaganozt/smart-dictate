@@ -235,6 +235,8 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-paste-active"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-rephrase" \
       "$SCRIPT_DST_DIR/voxtype-rephrase"
+    install -m 0755 "$SCRIPT_SRC_DIR/voxtype-summarize" \
+      "$SCRIPT_DST_DIR/voxtype-summarize"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-tray" \
       "$SCRIPT_DST_DIR/voxtype-tray"
     install -m 0644 "$SCRIPT_DIR/config/xbindkeysrc" \
@@ -320,14 +322,26 @@ step_keybinding() {
   if ! command -v gsettings >/dev/null 2>&1; then
     return 0
   fi
-  local key="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+  local base="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
+  local k0="$base/custom0/"
+  local k1="$base/custom1/"
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
     name "smart-dictate rephrase" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
     command "${SCRIPT_DST_DIR}/voxtype-rephrase" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$key" \
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
     binding "<Control><Alt>r" 2>/dev/null || true
   ok "GNOME keybinding set: Ctrl+Alt+R → voxtype-rephrase"
+  # Summarize uses xbindkeys only — skip the GNOME shortcut to avoid
+  # the settings daemon grabbing Ctrl+Alt+S before xbindkeys sees it.
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
+    name "" 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
+    command "" 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
+    binding "" 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \
+    "[ '$k0', '$k1' ]" 2>/dev/null || true
 }
 
 # ---------- verify ----------
@@ -353,6 +367,11 @@ verify() {
     ok "script:   $SCRIPT_DST_DIR/voxtype-rephrase"
   else
     err "script:   $SCRIPT_DST_DIR/voxtype-rephrase MISSING"; fail=1
+  fi
+  if [[ -x "$SCRIPT_DST_DIR/voxtype-summarize" ]]; then
+    ok "script:   $SCRIPT_DST_DIR/voxtype-summarize"
+  else
+    err "script:   $SCRIPT_DST_DIR/voxtype-summarize MISSING"; fail=1
   fi
   if [[ -x "$SCRIPT_DST_DIR/voxtype-tray" ]]; then
     ok "script:   $SCRIPT_DST_DIR/voxtype-tray"
@@ -445,6 +464,7 @@ do_uninstall() {
   rm -f  "$SCRIPT_DST_DIR/voxtype-clean-dictation"
   rm -f  "$SCRIPT_DST_DIR/voxtype-paste-active"
   rm -f  "$SCRIPT_DST_DIR/voxtype-rephrase"
+  rm -f  "$SCRIPT_DST_DIR/voxtype-summarize"
   rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
   rm -f  "$HOME/.xbindkeysrc"
   rm -f  "$SYSTEMD_DST_DIR/xbindkeys.service"

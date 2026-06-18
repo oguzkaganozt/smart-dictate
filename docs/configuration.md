@@ -180,6 +180,18 @@ an icon. VoxType ships snippets via `voxtype setup waybar`.
 # filler_words = ["uh", "um", "er", "ah", "eh", "hmm", "hm", "mm", "mhm"]
 ```
 
+## Summarize
+
+The `voxtype-summarize` script (Ctrl+Alt+S) reads selected text and shows a summary in a GTK3 popup near the cursor.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `SUMMARIZE_MODEL` | `qwen/qwen3.6-27b` | any Groq chat-completion model id |
+| `SUMMARIZE_ENDPOINT` | `https://api.groq.com/openai/v1/chat/completions` | any OpenAI-compatible endpoint |
+| `SUMMARIZE_STYLE` | (see `config/smart-dictate.toml`) | custom system prompt for summarization |
+
+The popup auto-closes after 30 seconds. Click, Escape, or `q` dismiss it immediately.
+
 ## Validation
 
 After any edit:

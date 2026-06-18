@@ -1,3 +1,7 @@
 # smart-dictate: rephrase selected text
-"~/.local/bin/voxtype-rephrase"
+"$HOME/.local/bin/voxtype-rephrase"
     control + alt + r
+
+# smart-dictate: summarize selected text
+"$HOME/.local/bin/voxtype-summarize"
+    control + alt + s
