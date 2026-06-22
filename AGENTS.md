@@ -48,7 +48,7 @@ Notifications are fire-and-forget (failures silently ignored).
 - All Python scripts use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
 - Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
 - Config file `~/.config/smart-dictate/config.toml` is read at import time. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`, `SUMMARIZE_MODEL`, `SUMMARIZE_ENDPOINT`, `SUMMARIZE_STYLE`) override config values at runtime.
-- `max_completion_tokens` is computed dynamically to fit within Groq free-tier 8000 TPM limit (`rephrase`:101-112). Caps at 4096, floor 512. Dictation script hardcodes 4096 (`clean-dictation:126`).
+- `max_completion_tokens`: rephrase/summarize compute it dynamically to fit the Groq free-tier 8000 TPM budget (`rephrase:101-112`, `summarize:105-116`) — floor 512, ceiling 4096. Dictation script hardcodes **512** (`clean-dictation:126`) — keep it small because short dictations need fast LLM responses, not long ones.
 
 ## Text rephrase
 
