@@ -123,7 +123,7 @@ MET\u0130N:
             {"role": "user", "content": user},
         ],
         "temperature": 0.0,
-        "max_completion_tokens": 4096,
+        "max_completion_tokens": 512,
     }
 
     if MODEL.startswith("openai/gpt-oss"):
@@ -141,7 +141,7 @@ MET\u0130N:
         },
     )
 
-    with urllib.request.urlopen(req, timeout=3.5) as response:
+    with urllib.request.urlopen(req, timeout=5.0) as response:
         data = json.loads(response.read().decode("utf-8"))
 
     choices = data.get("choices") or []

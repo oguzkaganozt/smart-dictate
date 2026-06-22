@@ -20,6 +20,7 @@ model = "large-v3-turbo"
 language = ["tr", "en"]
 translate = false
 gpu_device = 1
+gpu_isolation = true
 eager_processing = false
 eager_chunk_secs = 3.0
 
@@ -48,6 +49,6 @@ enabled = false
 enabled = true
 threshold = 0.5
 min_speech_duration_ms = 250
-min_silence_duration_ms = 500
+min_silence_duration_ms = 900
 max_speech_duration_s = 30
-speech_pad_ms = 30
+speech_pad_ms = 200
