@@ -24,51 +24,52 @@ mic  ──►  VoxType daemon  ──►  OpenAI Whisper (large-v3-turbo, Vulka
                           xdotool auto-paste
 ```
 
-Transcription runs locally. Only the optional cleanup/rephrase/summarize steps
-call Groq. Output is copied to the clipboard and pasted into the focused window
-with `Ctrl+V`, or `Ctrl+Shift+V` for terminals.
-
-## Features
-
-- Toggle dictation with the configured hotkey, default `RIGHTCTRL`.
-- Local Whisper transcription with Vulkan/NVIDIA acceleration.
-- Groq LLM cleanup for natural dictation while preserving shell/code snippets.
-- Selection rephrase with `Ctrl+Alt+R`.
-- Selection summarize with `Ctrl+Alt+S` and a small GTK popup.
-- System tray controls for start/stop/restart and microphone calibration.
-- Terminal-aware paste for Kitty, Alacritty, Ghostty, WezTerm, Konsole, Ptyxis,
-  KGX, Tilix, and common terminal windows.
-
-## Quickstart
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh | bash
 ```
 
-The installer prompts for a Groq API key if one is not already configured. Log
-out and back in after the first install so the `input` group membership is
-active. Then press `RIGHTCTRL`, speak, and press `RIGHTCTRL` again to paste the
-cleaned text into the current window.
+The installer prompts for a Groq API key if one is not already configured.
+Log out and back in so the `input` group membership is active, then press
+`RIGHTCTRL`, speak, and press `RIGHTCTRL` again to paste the cleaned text.
 
-Non-interactive install:
+Non-interactive:
 
 ```bash
 export GROQ_API_KEY="gsk_..."
 curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh | bash -s -- --yes
 ```
 
-## Commands
+Pin a specific version:
 
 ```bash
-smart-dictate status          # show daemon status and recent logs
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh \
+  | SMART_DICTATE_VERSION=v0.2.2 bash
+```
+
+## Features
+
+- Toggle dictation (`RIGHTCTRL`), selection rephrase (`Ctrl+Alt+R`), selection
+  summarize (`Ctrl+Alt+S`).
+- Local Whisper transcription with Vulkan/NVIDIA acceleration.
+- Groq LLM cleanup that preserves shell/code snippets.
+- System tray with start/stop/restart and microphone calibration.
+- Terminal-aware paste for Kitty, Alacritty, Ghostty, WezTerm, Konsole, Ptyxis,
+  KGX, Tilix, and common terminal windows.
+
+## Usage
+
+```bash
+smart-dictate status          # daemon status + recent logs
 smart-dictate check           # verify installed files/services
 smart-dictate check-updates   # compare installed version with latest release
-smart-dictate upgrade         # download, verify, install, and restart services
+smart-dictate upgrade         # download, verify, install, restart services
 smart-dictate calibrate-mic   # run the microphone calibration wizard
 smart-dictate uninstall       # remove services, scripts, config, and model data
 ```
 
-Source checkout commands are still available for development:
+Install a development checkout with the Makefile:
 
 ```bash
 make install
@@ -76,19 +77,7 @@ make check
 make lint
 ```
 
-Installer flags, used by the bootstrap script and `smart-dictate install`:
-
-- `./install.sh --yes` runs non-interactively.
-- `./install.sh --check` verifies without changing files.
-- `./install.sh --dry-run` prints planned actions.
-- `./install.sh --uninstall` removes the installation.
-- `KEEP_CONFIG=1 make uninstall` preserves user config.
-- `KEEP_MODEL=1 make uninstall` preserves the Whisper model.
-
 ## Updates
-
-Smart Dictate uses GitHub release bundles for self-managed updates. Users do
-not need to clone the repository.
 
 ```bash
 smart-dictate check-updates
@@ -100,74 +89,30 @@ smart-dictate upgrade
 services. The tray app also checks for updates after startup and exposes an
 `Upgrade Smart Dictate` menu item.
 
-Install a specific version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh \
-  | SMART_DICTATE_VERSION=v0.1.0 bash
-```
-
 ## Configuration
 
-Runtime config lives in:
+| File | Purpose |
+| --- | --- |
+| `~/.config/voxtype/config.toml` | VoxType daemon config (hotkey, model, paste hook) |
+| `~/.config/smart-dictate/config.toml` | Groq model, endpoint, prompts |
+| `~/.config/smart-dictate/version` | Installed version marker |
+| `~/.local/share/smart-dictate/source` | Local installer copy for `smart-dictate check/uninstall` |
+| `~/.xbindkeysrc` | Rephrase / summarize bindings |
 
-- `~/.config/voxtype/config.toml`
-- `~/.config/smart-dictate/config.toml`
-- `~/.xbindkeysrc`
-
-Source templates live under `config/`. Re-run `./install.sh` after editing repo
-templates.
-
-Installed release source is kept at `~/.local/share/smart-dictate/source` so the
-`smart-dictate` CLI can run local checks and uninstall commands without a git
-checkout.
-
-Groq API key lookup order:
-
-1. `GROQ_API_KEY` environment variable
-2. `~/.config/smart-dictate/config.toml`
-3. `~/.config/voxtype/groq-api-key`
-4. Interactive installer prompt
+Groq API key lookup order: `GROQ_API_KEY` env var → `~/.config/smart-dictate/config.toml`
+→ `~/.config/voxtype/groq-api-key` → interactive installer prompt.
 
 See [docs/configuration.md](docs/configuration.md) for all knobs.
 
-## Verify
-
-```bash
-voxtype setup check
-systemctl --user status voxtype
-journalctl --user -u voxtype.service -n 30 --no-pager
-journalctl --user -u voxtype-tray.service -n 10 --no-pager
-voxtype status
-```
-
-If transcription works but text does not paste, check the active window type and
-`scripts/voxtype-paste-active` terminal detection.
-
-## Repository
-
-```text
-smart-dictate/
-├── install.sh                    # bootstrap, check, uninstall, calibration
-├── Makefile                      # install/check/status/lint aliases
-├── config/                       # voxtype, smart-dictate, systemd templates
-├── scripts/                      # dictation, paste, rephrase, summarize, tray
-├── docs/                         # architecture, configuration, troubleshooting
-├── assets/                       # logo
-└── .github/workflows/release.yml # tagged release packaging
-```
-
 ## Release
 
-Create a GitHub release by pushing a version tag:
-
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.x.y
+git push origin v0.x.y
 ```
 
-The release workflow runs `make lint`, builds a source tarball, writes a
-`SHA256SUMS` file, and uploads both to the GitHub release.
+The release workflow runs `make lint`, builds a source tarball, writes
+`SHA256SUMS`, and uploads both to the GitHub release.
 
 ## Documentation
 
@@ -178,7 +123,3 @@ The release workflow runs `make lint`, builds a source tarball, writes a
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-VoxType is MIT-licensed by Peter Jackson / Faster Agile. Whisper model weights
-are downloaded at install time from the official Hugging Face mirror via
-`voxtype setup model`.
