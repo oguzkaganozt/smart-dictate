@@ -125,6 +125,7 @@ class TrayIndicator:
 
         self._update()
         GLib.timeout_add_seconds(POLL_SEC, self._update)
+        GLib.timeout_add_seconds(20, self._check_updates)
 
     def _setup_ayatana(self) -> None:
         self._indicator = AppIndicator.Indicator.new(
@@ -175,6 +176,10 @@ class TrayIndicator:
         item.connect("activate", lambda *_: self._calibrate())
         menu.append(item)
 
+        item = Gtk.MenuItem(label="Upgrade Smart Dictate")
+        item.connect("activate", lambda *_: self._upgrade())
+        menu.append(item)
+
         menu.append(Gtk.SeparatorMenuItem())
 
         item = Gtk.MenuItem(label="Quit")
@@ -212,6 +217,17 @@ class TrayIndicator:
             "echo Calibration exit code: $status; echo; "
             "read -r -p 'Press Enter to close...'"
         )
+        self._open_terminal(script)
+
+    def _upgrade(self) -> None:
+        script = (
+            "smart-dictate upgrade; status=$?; echo; "
+            "echo Upgrade exit code: $status; echo; "
+            "read -r -p 'Press Enter to close...'"
+        )
+        self._open_terminal(script)
+
+    def _open_terminal(self, script: str) -> None:
         candidates = [
             ["gnome-terminal", "--", "bash", "-lc", script],
             ["kgx", "--", "bash", "-lc", script],
@@ -229,6 +245,28 @@ class TrayIndicator:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+    def _check_updates(self) -> bool:
+        if not shutil.which("smart-dictate"):
+            return False
+        try:
+            r = subprocess.run(
+                ["smart-dictate", "check-updates", "--quiet"],
+                capture_output=True,
+                text=True,
+                timeout=20.0,
+            )
+        except Exception:
+            return False
+        if r.returncode == 10:
+            latest = r.stdout.strip() or "latest"
+            subprocess.Popen(
+                ["notify-send", "--app-name=smart-dictate", "Update available",
+                 f"smart-dictate {latest} is available. Use the tray menu or run: smart-dictate upgrade"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        return False
 
     def _update(self) -> bool:
         try:

@@ -42,32 +42,41 @@ with `Ctrl+V`, or `Ctrl+Shift+V` for terminals.
 ## Quickstart
 
 ```bash
-git clone https://github.com/oguzkaganozt/auto-speech.git smart-dictate
-cd smart-dictate
-
-# Choose one API key path:
-export GROQ_API_KEY="gsk_..."
-# or:
-cp .env.example .env && "$EDITOR" .env
-
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh | bash
 ```
 
-Log out and back in after the first install so the `input` group membership is
+The installer prompts for a Groq API key if one is not already configured. Log
+out and back in after the first install so the `input` group membership is
 active. Then press `RIGHTCTRL`, speak, and press `RIGHTCTRL` again to paste the
 cleaned text into the current window.
+
+Non-interactive install:
+
+```bash
+export GROQ_API_KEY="gsk_..."
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh | bash -s -- --yes
+```
 
 ## Commands
 
 ```bash
-make install          # run ./install.sh
-make check            # verify installed files/services
-make status           # show voxtype service status and recent logs
-make lint             # syntax-check shell and Python scripts
-make uninstall        # remove services, scripts, config, and model data
+smart-dictate status          # show daemon status and recent logs
+smart-dictate check           # verify installed files/services
+smart-dictate check-updates   # compare installed version with latest release
+smart-dictate upgrade         # download, verify, install, and restart services
+smart-dictate calibrate-mic   # run the microphone calibration wizard
+smart-dictate uninstall       # remove services, scripts, config, and model data
 ```
 
-Installer flags:
+Source checkout commands are still available for development:
+
+```bash
+make install
+make check
+make lint
+```
+
+Installer flags, used by the bootstrap script and `smart-dictate install`:
 
 - `./install.sh --yes` runs non-interactively.
 - `./install.sh --check` verifies without changing files.
@@ -75,6 +84,28 @@ Installer flags:
 - `./install.sh --uninstall` removes the installation.
 - `KEEP_CONFIG=1 make uninstall` preserves user config.
 - `KEEP_MODEL=1 make uninstall` preserves the Whisper model.
+
+## Updates
+
+Smart Dictate uses GitHub release bundles for self-managed updates. Users do
+not need to clone the repository.
+
+```bash
+smart-dictate check-updates
+smart-dictate upgrade
+```
+
+`smart-dictate upgrade` downloads the latest release tarball, verifies it with
+`SHA256SUMS`, runs the bundled installer with `--yes`, and restarts the user
+services. The tray app also checks for updates after startup and exposes an
+`Upgrade Smart Dictate` menu item.
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh \
+  | SMART_DICTATE_VERSION=v0.1.0 bash
+```
 
 ## Configuration
 
@@ -86,6 +117,10 @@ Runtime config lives in:
 
 Source templates live under `config/`. Re-run `./install.sh` after editing repo
 templates.
+
+Installed release source is kept at `~/.local/share/smart-dictate/source` so the
+`smart-dictate` CLI can run local checks and uninstall commands without a git
+checkout.
 
 Groq API key lookup order:
 

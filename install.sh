@@ -511,6 +511,7 @@ case "$MODE" in
     step_input_group
     step_config
     step_smart_dictate_config
+    step_source_tree
     step_scripts
     step_api_key
     step_model
@@ -525,6 +526,7 @@ case "$MODE" in
     step_input_group
     step_config
     step_smart_dictate_config
+    step_source_tree
     step_scripts
     step_api_key
     step_model

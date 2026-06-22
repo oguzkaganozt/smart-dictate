@@ -5,6 +5,8 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 ## Entry points
 
 - `./install.sh` — single bootstrap. Flags: `--check` (verify), `--dry-run`, `--yes`, `--uninstall`, `--no-model`.
+- `bootstrap.sh` — curl-friendly installer. Downloads latest GitHub release tarball, verifies `SHA256SUMS`, and runs bundled `install.sh`.
+- `smart-dictate` — installed CLI. Commands: `status`, `check`, `check-updates`, `upgrade`, `restart`, `calibrate-mic`, `install`, `uninstall`, `version`.
 - `make install|uninstall|check|dry-run|status|clean-api-key|lint` — pass-through aliases.
 - `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (preserve model data). Defaults: both removed.
 
@@ -41,6 +43,7 @@ Notifications are fire-and-forget (failures silently ignored).
 - `scripts/voxtype-summarize` — reads PRIMARY/CLIPBOARD selection via xclip, summarizes via Groq (temp 0.15, no reasoning), shows GTK3 popup near mouse cursor. Auto-closes after 30s or on click/Escape/q.
 - `scripts/voxtype-tray` — system tray indicator (GTK3 StatusIcon / Ayatana AppIndicator3). Right-click menu includes "Calibrate Microphone" which runs `voxtype-calibrate-mic`.
 - `scripts/voxtype-calibrate-mic` — interactive mic gain calibration. Records noise + speech samples at increasing gain levels, targets safe speech headroom instead of the loudest possible gain, and sets it via amixer. Run with `./install.sh --calibrate-mic` or from the tray menu.
+- `scripts/smart-dictate` — stdlib-only CLI for status/check/upgrade/uninstall wrappers. `upgrade` downloads latest GitHub release, verifies SHA256SUMS, runs `install.sh --yes`, then restarts user services.
 - `scripts/voxtype-paste-active` — shell script, X11-only (xdotool + xprop).
 - All Python scripts use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
 - Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
@@ -79,7 +82,7 @@ User must be in `input` group (hotkey evdev + modifier-release guard). Takes eff
 make lint   # bash -n + py_compile + sh -n sweep
 ```
 
-Release workflow: `.github/workflows/release.yml` runs `make lint` on `v*` tags, builds a source tarball, writes `SHA256SUMS`, and uploads both to the GitHub release. No test files.
+Release workflow: `.github/workflows/release.yml` runs `make lint` on `v*` tags, builds a source tarball, writes the tag into bundled `VERSION`, writes `SHA256SUMS`, and uploads both to the GitHub release. No test files.
 
 ## Documentation
 
