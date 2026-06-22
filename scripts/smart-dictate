@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = "oguzkaganozt/auto-speech"
+REPO = "oguzkaganozt/smart-dictate"
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "smart-dictate"
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "smart-dictate"
 VERSION_FILE = CONFIG_DIR / "version"

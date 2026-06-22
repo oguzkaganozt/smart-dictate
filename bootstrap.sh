@@ -3,7 +3,7 @@
 
 set -Eeuo pipefail
 
-REPO="${SMART_DICTATE_REPO:-oguzkaganozt/auto-speech}"
+REPO="${SMART_DICTATE_REPO:-oguzkaganozt/smart-dictate}"
 VERSION="${SMART_DICTATE_VERSION:-latest}"
 TMPDIR="$(mktemp -d)"
 

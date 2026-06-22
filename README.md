@@ -5,7 +5,7 @@
 # smart-dictate
 
 <p align="center">
-  <a href="https://github.com/oguzkaganozt/auto-speech/actions/workflows/release.yml"><img alt="Release" src="https://github.com/oguzkaganozt/auto-speech/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/oguzkaganozt/smart-dictate/actions/workflows/release.yml"><img alt="Release" src="https://github.com/oguzkaganozt/smart-dictate/actions/workflows/release.yml/badge.svg"></a>
   <img alt="Ubuntu 24.04" src="https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
   <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-green.svg">
@@ -42,7 +42,7 @@ with `Ctrl+V`, or `Ctrl+Shift+V` for terminals.
 ## Quickstart
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh | bash
 ```
 
 The installer prompts for a Groq API key if one is not already configured. Log
@@ -54,7 +54,7 @@ Non-interactive install:
 
 ```bash
 export GROQ_API_KEY="gsk_..."
-curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh | bash -s -- --yes
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh | bash -s -- --yes
 ```
 
 ## Commands
@@ -103,7 +103,7 @@ services. The tray app also checks for updates after startup and exposes an
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/auto-speech/main/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh \
   | SMART_DICTATE_VERSION=v0.1.0 bash
 ```
 
