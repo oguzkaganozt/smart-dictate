@@ -26,12 +26,16 @@ CONFIG_SRC="$SCRIPT_DIR/config/voxtype.toml"
 SMART_DICTATE_CONFIG_SRC="$SCRIPT_DIR/config/smart-dictate.toml"
 SYSTEMD_DIR="$SCRIPT_DIR/config/systemd"
 SCRIPT_SRC_DIR="$SCRIPT_DIR/scripts"
+VERSION_SRC="$SCRIPT_DIR/VERSION"
 
 VOXTYPE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/config.toml"
-SMART_DICTATE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate/config.toml"
+SMART_DICTATE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
+SMART_DICTATE_CONFIG_DST="$SMART_DICTATE_CONFIG_DIR/config.toml"
 VOXTYPE_KEY_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/groq-api-key"
 SYSTEMD_DST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SCRIPT_DST_DIR="${XDG_LOCAL_BIN:-$HOME/.local/bin}"
+SMART_DICTATE_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/smart-dictate"
+SMART_DICTATE_SOURCE_DST="$SMART_DICTATE_DATA_DIR/source"
 
 VOXTYPE_DEB_URL="https://github.com/peteonrails/voxtype/releases/download/v0.7.5/voxtype_0.7.5-1_amd64.deb"
 VOXTYPE_DEB_TMP="/tmp/voxtype-install.deb"
@@ -252,6 +256,33 @@ step_smart_dictate_config() {
   run mkdir -p "$(dirname "$SMART_DICTATE_CONFIG_DST")"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
     install -m 0644 "$SMART_DICTATE_CONFIG_SRC" "$SMART_DICTATE_CONFIG_DST"
+    if [[ -f "$VERSION_SRC" ]]; then
+      install -m 0644 "$VERSION_SRC" "$SMART_DICTATE_CONFIG_DIR/version"
+    else
+      printf 'dev\n' > "$SMART_DICTATE_CONFIG_DIR/version"
+    fi
+    printf '%s\n' "$SMART_DICTATE_SOURCE_DST" > "$SMART_DICTATE_CONFIG_DIR/source-dir"
+  fi
+}
+
+step_source_tree() {
+  log "Deploying install source: $SMART_DICTATE_SOURCE_DST"
+  run mkdir -p "$SMART_DICTATE_SOURCE_DST"
+  if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
+    rm -rf "$SMART_DICTATE_SOURCE_DST"
+    mkdir -p "$SMART_DICTATE_SOURCE_DST"
+    install -m 0755 "$SCRIPT_DIR/install.sh" "$SMART_DICTATE_SOURCE_DST/install.sh"
+    install -m 0755 "$SCRIPT_DIR/bootstrap.sh" "$SMART_DICTATE_SOURCE_DST/bootstrap.sh"
+    install -m 0644 "$SCRIPT_DIR/Makefile" "$SMART_DICTATE_SOURCE_DST/Makefile"
+    install -m 0644 "$SCRIPT_DIR/README.md" "$SMART_DICTATE_SOURCE_DST/README.md"
+    install -m 0644 "$SCRIPT_DIR/LICENSE" "$SMART_DICTATE_SOURCE_DST/LICENSE"
+    install -m 0644 "$SCRIPT_DIR/VERSION" "$SMART_DICTATE_SOURCE_DST/VERSION"
+    install -m 0644 "$SCRIPT_DIR/.env.example" "$SMART_DICTATE_SOURCE_DST/.env.example"
+    cp -a "$SCRIPT_DIR/config" "$SMART_DICTATE_SOURCE_DST/config"
+    cp -a "$SCRIPT_DIR/scripts" "$SMART_DICTATE_SOURCE_DST/scripts"
+    cp -a "$SCRIPT_DIR/docs" "$SMART_DICTATE_SOURCE_DST/docs"
+    cp -a "$SCRIPT_DIR/assets" "$SMART_DICTATE_SOURCE_DST/assets"
+    rm -rf "$SMART_DICTATE_SOURCE_DST/scripts/__pycache__"
   fi
 }
 
@@ -272,6 +303,8 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-tray"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-calibrate-mic" \
       "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
+    install -m 0755 "$SCRIPT_SRC_DIR/smart-dictate" \
+      "$SCRIPT_DST_DIR/smart-dictate"
     rendered="$(mktemp)"
     sed -e "s|\${REPHRASE_BIND}|$REPHRASE_BIND|g" \
          -e "s|\${SUMMARIZE_BIND}|$SUMMARIZE_BIND|g" \
@@ -391,6 +424,11 @@ verify() {
   else
     err "script:   $SCRIPT_DST_DIR/voxtype-calibrate-mic MISSING"; fail=1
   fi
+  if [[ -x "$SCRIPT_DST_DIR/smart-dictate" ]]; then
+    ok "script:   $SCRIPT_DST_DIR/smart-dictate"
+  else
+    err "script:   $SCRIPT_DST_DIR/smart-dictate MISSING"; fail=1
+  fi
 
   if [[ -f "$VOXTYPE_CONFIG_DST" ]]; then
     ok "config:   $VOXTYPE_CONFIG_DST"
@@ -401,6 +439,16 @@ verify() {
     ok "config:   $SMART_DICTATE_CONFIG_DST"
   else
     err "config:   $SMART_DICTATE_CONFIG_DST MISSING"; fail=1
+  fi
+  if [[ -f "$SMART_DICTATE_CONFIG_DIR/version" ]]; then
+    ok "version:  $(tr -d '\n' < "$SMART_DICTATE_CONFIG_DIR/version")"
+  else
+    err "version:  $SMART_DICTATE_CONFIG_DIR/version MISSING"; fail=1
+  fi
+  if [[ -x "$SMART_DICTATE_SOURCE_DST/install.sh" ]]; then
+    ok "source:   $SMART_DICTATE_SOURCE_DST"
+  else
+    err "source:   $SMART_DICTATE_SOURCE_DST MISSING"; fail=1
   fi
   if [[ -f "$HOME/.xbindkeysrc" ]]; then
     ok "config:   $HOME/.xbindkeysrc"
@@ -480,6 +528,7 @@ do_uninstall() {
   rm -f  "$SCRIPT_DST_DIR/voxtype-summarize"
   rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
   rm -f  "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
+  rm -f  "$SCRIPT_DST_DIR/smart-dictate"
   rm -f  "$HOME/.xbindkeysrc"
   rm -f  "$SYSTEMD_DST_DIR/xbindkeys.service"
 
@@ -497,6 +546,7 @@ do_uninstall() {
   fi
 
   warn "Not removing the voxtype .deb itself. Run:  sudo apt remove voxtype"
+  rm -rf "$SMART_DICTATE_DATA_DIR"
   ok "uninstall complete"
 }
 
