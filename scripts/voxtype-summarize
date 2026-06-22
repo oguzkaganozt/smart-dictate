@@ -265,7 +265,7 @@ def show_popup(text: str) -> None:
 
     PAD = 8
     ACCENT_W = 4
-    CHARS_PER_LINE = 55
+    CHARS_PER_LINE = 62
 
     css = b"""
     .card {
