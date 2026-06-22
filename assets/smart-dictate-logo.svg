@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">smart-dictate logo</title>
+  <desc id="desc">Minimal monochrome microphone and text cursor mark.</desc>
+  <g fill="none" stroke="#111111" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="356" y="128" width="312" height="456" rx="156" stroke-width="56"/>
+    <path d="M512 268v176" stroke-width="56"/>
+    <path d="M284 464v52c0 126 102 228 228 228s228-102 228-228v-52" stroke-width="56"/>
+    <path d="M512 744v120" stroke-width="56"/>
+    <path d="M388 864h248" stroke-width="56"/>
+  </g>
+</svg>

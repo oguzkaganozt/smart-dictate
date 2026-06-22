@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/smart-dictate-logo.svg" alt="smart-dictate logo" width="160">
+</p>
+
 # smart-dictate
 
 Reproducible bootstrap for a local push-to-talk voice-to-text pipeline with
