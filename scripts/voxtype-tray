@@ -2,9 +2,9 @@
 """
 voxtype-tray: system tray indicator for smart-dictate.
 
-Shows a microphone icon in the system tray:
-  Green  -> voxtype service is active (listening)
-  Gray   -> voxtype service is inactive
+Shows a minimal monochrome microphone icon in the system tray:
+  Bright -> voxtype service is active (listening)
+  Dim    -> voxtype service is inactive
 
 Left-click toggles the service (start / stop).  Right-click opens a
 menu to start, stop, restart, or quit the indicator.
@@ -57,40 +57,35 @@ def _render_surface(active: bool) -> cairo.ImageSurface:
     cr.paint()
     cr.set_operator(cairo.OPERATOR_OVER)
 
-    cx = cy = ICON_SIZE // 2
-
-    cr.arc(cx, cy, 11, 0, 2 * math.pi)
-    if active:
-        cr.set_source_rgb(0.15, 0.68, 0.38)
-    else:
-        cr.set_source_rgb(0.55, 0.55, 0.55)
-    cr.fill()
-
-    tx = 9.5
-    bw, bh = 5, 9
-    rx = 1.5
-
-    cr.set_source_rgb(1, 1, 1)
-    cr.set_line_width(2)
+    cr.scale(ICON_SIZE / 24, ICON_SIZE / 24)
+    cr.set_source_rgb(*(0.95, 0.95, 0.95) if active else (0.52, 0.52, 0.52))
+    cr.set_line_width(2.2)
     cr.set_line_cap(cairo.LINE_CAP_ROUND)
     cr.set_line_join(cairo.LINE_JOIN_ROUND)
 
+    x, y, w, h, rx = 8, 3, 8, 11, 4
     cr.new_sub_path()
-    cr.arc(tx + rx, cy - bh // 2 + rx, rx, math.pi, 3 * math.pi / 2)
-    cr.arc(tx + bw - rx, cy - bh // 2 + rx, rx, 3 * math.pi / 2, 0)
-    cr.arc(tx + bw - rx, cy - bh // 2 + bh - rx, rx, 0, math.pi / 2)
-    cr.arc(tx + rx, cy - bh // 2 + bh - rx, rx, math.pi / 2, math.pi)
+    cr.arc(x + rx, y + rx, rx, math.pi, 3 * math.pi / 2)
+    cr.arc(x + w - rx, y + rx, rx, 3 * math.pi / 2, 0)
+    cr.arc(x + w - rx, y + h - rx, rx, 0, math.pi / 2)
+    cr.arc(x + rx, y + h - rx, rx, math.pi / 2, math.pi)
     cr.close_path()
     cr.stroke()
 
-    cr.arc(cx, cy - bh // 2 + bh + 1, 4, 0, math.pi)
+    cr.move_to(12, 7)
+    cr.line_to(12, 10)
     cr.stroke()
 
-    for i in range(3):
-        gy = cy - bh // 2 + 2 + i * 2.5
-        cr.move_to(tx + 1.5, gy)
-        cr.line_to(tx + bw - 1.5, gy)
-        cr.stroke()
+    cr.move_to(5.5, 11)
+    cr.curve_to(5.5, 15.5, 8.4, 18, 12, 18)
+    cr.curve_to(15.6, 18, 18.5, 15.5, 18.5, 11)
+    cr.stroke()
+
+    cr.move_to(12, 18)
+    cr.line_to(12, 21)
+    cr.move_to(8.5, 21)
+    cr.line_to(15.5, 21)
+    cr.stroke()
 
     return s
 

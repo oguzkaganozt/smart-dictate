@@ -87,8 +87,8 @@ Key docs at `docs/`: `architecture.md`, `configuration.md`, `troubleshooting.md`
 ## System tray indicator
 
 `scripts/voxtype-tray` — autostarted via `voxtype-tray.service`. Shows a
-microphone icon in the system tray: green when voxtype is active (listening),
-gray when inactive. Left-click toggles the service; right-click opens a menu
+microphone icon in the system tray: bright when voxtype is active (listening),
+dim when inactive. Left-click toggles the service; right-click opens a menu
 (Start / Stop / Restart / Quit). Uses GTK StatusIcon on X11 and Ayatana
 AppIndicator3 on Wayland.
 
