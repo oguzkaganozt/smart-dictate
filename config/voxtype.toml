@@ -1,12 +1,12 @@
 # VoxType configuration — deployed to ~/.config/voxtype/config.toml.
 # See https://voxtype.io for full documentation of all available options.
-# NOTE: ${HOME} references below are template variables resolved by install.sh.
-# Do not copy this file manually; always run ./install.sh to deploy it.
+# NOTE: ${HOME} and ${DICTATION_KEY} references below are template variables
+# resolved by install.sh.  Do not copy this file manually; run ./install.sh.
 
 state_file = "auto"
 
 [hotkey]
-key = "RIGHTCTRL"
+key = "${DICTATION_KEY}"
 modifiers = []
 mode = "toggle"
 

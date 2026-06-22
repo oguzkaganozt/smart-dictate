@@ -55,7 +55,7 @@ def _load_config() -> dict:
 
 _cfg = _load_config()
 
-MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "openai/gpt-oss-120b")
+MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "qwen/qwen3.6-27b")
 ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
     "endpoint", "https://api.groq.com/openai/v1/chat/completions"
 )

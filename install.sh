@@ -40,6 +40,13 @@ MODE="install"
 ASSUME_YES=0
 SKIP_MODEL=0
 
+# ---------- hotkey defaults (overridable interactively at install) ----------
+# Dictation key uses VoxType/evdev names (e.g. RIGHTCTRL, RIGHTALT, F12).
+# Rephrase/summarize use xbindkeys syntax (e.g. "control + alt + r").
+DICTATION_KEY="RIGHTCTRL"
+REPHRASE_BIND="control + alt + r"
+SUMMARIZE_BIND="control + alt + s"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --check)      MODE="check"; shift ;;
@@ -88,6 +95,27 @@ load_env() {
     # shellcheck disable=SC1091
     set -a; . "$SCRIPT_DIR/.env"; set +a
   fi
+}
+
+# ---------- interactive hotkey selection ----------
+# Prompt for the three hotkeys, keeping the default when the user presses
+# Enter. Skipped entirely under --yes / --check / --dry-run so automated and
+# non-interactive runs keep the defaults.
+prompt_shortcuts() {
+  if [[ "$MODE" != "install" || "$ASSUME_YES" -eq 1 ]]; then
+    return 0
+  fi
+  log "Configure hotkeys — press Enter to keep the [default] shown."
+  log "  Dictation uses evdev names (RIGHTCTRL, RIGHTALT, F12, ...)."
+  log "  Rephrase/summarize use xbindkeys syntax (e.g. 'control + alt + r')."
+  local ans
+  read -r -p "  Dictation push-to-talk key [$DICTATION_KEY]: " ans
+  [[ -n "$ans" ]] && DICTATION_KEY="$ans"
+  read -r -p "  Rephrase binding [$REPHRASE_BIND]: " ans
+  [[ -n "$ans" ]] && REPHRASE_BIND="$ans"
+  read -r -p "  Summarize binding [$SUMMARIZE_BIND]: " ans
+  [[ -n "$ans" ]] && SUMMARIZE_BIND="$ans"
+  ok "Hotkeys: dictation=$DICTATION_KEY  rephrase='$REPHRASE_BIND'  summarize='$SUMMARIZE_BIND'"
 }
 
 # ---------- preflight ----------
@@ -196,7 +224,7 @@ step_config() {
     # Template-substitute ${HOME} so paths point at this user's home.
     local rendered
     rendered="$(mktemp)"
-    sed "s|\${HOME}|$HOME|g" "$CONFIG_SRC" > "$rendered"
+    sed -e "s|\${HOME}|$HOME|g" -e "s|\${DICTATION_KEY}|$DICTATION_KEY|g" "$CONFIG_SRC" > "$rendered"
     install -m 0644 "$rendered" "$VOXTYPE_CONFIG_DST"
     rm -f "$rendered"
   fi
@@ -229,6 +257,7 @@ step_scripts() {
   log "Installing scripts to $SCRIPT_DST_DIR/"
   run mkdir -p "$SCRIPT_DST_DIR"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
+    local rendered
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-clean-dictation" \
       "$SCRIPT_DST_DIR/voxtype-clean-dictation"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-paste-active" \
@@ -239,8 +268,12 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-summarize"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-tray" \
       "$SCRIPT_DST_DIR/voxtype-tray"
-    install -m 0644 "$SCRIPT_DIR/config/xbindkeysrc" \
-      "$HOME/.xbindkeysrc"
+    rendered="$(mktemp)"
+    sed -e "s|\${REPHRASE_BIND}|$REPHRASE_BIND|g" \
+         -e "s|\${SUMMARIZE_BIND}|$SUMMARIZE_BIND|g" \
+         "$SCRIPT_DIR/config/xbindkeysrc" > "$rendered"
+    install -m 0644 "$rendered" "$HOME/.xbindkeysrc"
+    rm -f "$rendered"
   fi
 }
 
@@ -313,35 +346,6 @@ step_service() {
   systemctl --user enable --now voxtype.service voxtype-tray.service xbindkeys.service
   sleep 1
   systemctl --user --no-pager --full status voxtype.service || true
-}
-
-step_keybinding() {
-  if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
-    return 0
-  fi
-  if ! command -v gsettings >/dev/null 2>&1; then
-    return 0
-  fi
-  local base="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
-  local k0="$base/custom0/"
-  local k1="$base/custom1/"
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
-    name "smart-dictate rephrase" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
-    command "${SCRIPT_DST_DIR}/voxtype-rephrase" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k0" \
-    binding "<Control><Alt>r" 2>/dev/null || true
-  ok "GNOME keybinding set: Ctrl+Alt+R → voxtype-rephrase"
-  # Summarize uses xbindkeys only — skip the GNOME shortcut to avoid
-  # the settings daemon grabbing Ctrl+Alt+S before xbindkeys sees it.
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
-    name "" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
-    command "" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$k1" \
-    binding "" 2>/dev/null || true
-  gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \
-    "[ '$k0', '$k1' ]" 2>/dev/null || true
 }
 
 # ---------- verify ----------
@@ -476,8 +480,10 @@ do_uninstall() {
     warn "KEEP_CONFIG=1: leaving voxtype config + smart-dictate config"
   fi
 
-  if [[ "${KEEP_MODEL:-0}" != "1" ]]; then
+  if [[ "${KEEP_MODEL:-0}" == "1" ]]; then
     warn "Keeping ~/.local/share/voxtype/ (model + meetings) — set KEEP_MODEL=0 to remove"
+  else
+    rm -rf "${HOME}/.local/share/voxtype"
   fi
 
   warn "Not removing the voxtype .deb itself. Run:  sudo apt remove voxtype"
@@ -490,6 +496,7 @@ preflight
 
 case "$MODE" in
   install)
+    prompt_shortcuts
     step_apt_deps
     step_input_group
     step_config
@@ -498,7 +505,6 @@ case "$MODE" in
     step_api_key
     step_model
     step_service
-    step_keybinding
     echo
     log "Installation finished. Running verify:"
     verify
@@ -513,7 +519,6 @@ case "$MODE" in
     step_api_key
     step_model
     step_service
-    step_keybinding
     echo
     log "Dry-run complete. Re-run without --dry-run to apply."
     exit 0

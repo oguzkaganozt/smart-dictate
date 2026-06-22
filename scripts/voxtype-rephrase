@@ -43,7 +43,7 @@ MODEL = (
     os.environ.get("REPHRASE_MODEL")
     or _cfg["rephrase"].get("model")
     or os.environ.get("GROQ_MODEL")
-    or _cfg["groq"].get("model", "openai/gpt-oss-120b")
+    or _cfg["groq"].get("model", "qwen/qwen3.6-27b")
 )
 ENDPOINT = (
     os.environ.get("REPHRASE_ENDPOINT")
@@ -159,6 +159,31 @@ def _notify_err(msg: str) -> None:
         pass
 
 
+TERMINAL_MARKERS = (
+    "terminal", "console", "ptyxis", "kgx", "konsole", "tilix",
+    "kitty", "alacritty", "wezterm", "ghostty",
+)
+
+
+def _is_terminal(wid: str) -> bool:
+    """True if the active window looks like a terminal (needs ctrl+shift+v)."""
+    if not wid:
+        return False
+    parts = []
+    for cmd in (
+        ["xdotool", "getwindowclassname", wid],
+        ["xdotool", "getwindowname", wid],
+        ["xprop", "-id", wid, "WM_CLASS"],
+    ):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            parts.append(r.stdout)
+        except Exception:
+            pass
+    hay = " ".join(parts).lower()
+    return any(m in hay for m in TERMINAL_MARKERS)
+
+
 def paste_text(text: str) -> None:
     wid = subprocess.run(
         ["xdotool", "getactivewindow"],
@@ -175,8 +200,9 @@ def paste_text(text: str) -> None:
             capture_output=True, timeout=5.0,
         )
         time.sleep(0.05)
-    subprocess.run(["xdotool", "key", "ctrl+v"], timeout=5.0)
-    log(f"pasted {len(text)} chars")
+    key = "ctrl+shift+v" if _is_terminal(wid) else "ctrl+v"
+    subprocess.run(["xdotool", "key", key], timeout=5.0)
+    log(f"pasted {len(text)} chars via {key}")
 
 
 

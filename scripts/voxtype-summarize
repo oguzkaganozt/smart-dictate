@@ -12,7 +12,7 @@ from pathlib import Path
 CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
 LOG = Path("/tmp") / "voxtype-summarize.log"
-MAX_INPUT = 30000
+MAX_INPUT = 24000
 
 
 def log(msg: str) -> None:

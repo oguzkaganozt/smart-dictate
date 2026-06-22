@@ -6,7 +6,7 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 
 - `./install.sh` — single bootstrap. Flags: `--check` (verify), `--dry-run`, `--yes`, `--uninstall`, `--no-model`.
 - `make install|uninstall|check|dry-run|status|clean-api-key|lint` — pass-through aliases.
-- `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (remove model data). Defaults: model+config kept.
+- `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (preserve model data). Defaults: both removed.
 
 ## API key auth order
 
@@ -37,7 +37,7 @@ Notifications are fire-and-forget (failures silently ignored).
 ## Python scripts
 
 - `scripts/voxtype-clean-dictation` — stdin/stdout LLM cleanup pipe. Called by VoxType daemon.
-- `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v`. Captures active window ID inside `paste_text()` (not from `main()`) — re-reads just before paste to avoid window-switch races.
+- `scripts/voxtype-rephrase` — reads PRIMARY/CLIPBOARD selection via xclip, rewrites via Groq, pastes via `xdotool key ctrl+v` (or `ctrl+shift+v` in terminals). Captures active window ID inside `paste_text()` (not from `main()`) — re-reads just before paste to avoid window-switch races.
 - `scripts/voxtype-summarize` — reads PRIMARY/CLIPBOARD selection via xclip, summarizes via Groq (temp 0.15, no reasoning), shows GTK3 popup near mouse cursor. Auto-closes after 30s or on click/Escape/q.
 - `scripts/voxtype-tray` — system tray indicator (GTK3 StatusIcon / Ayatana AppIndicator3).
 - `scripts/voxtype-paste-active` — shell script, X11-only (xdotool + xprop).
@@ -48,17 +48,17 @@ Notifications are fire-and-forget (failures silently ignored).
 
 ## Text rephrase
 
-`voxtype-rephrase` — binds to **Ctrl+Alt+R** (via xbindkeys). Reads PRIMARY/CLIPBOARD selection, rewrites via Groq (5s timeout, temp 0.3, max 20000 chars input), pastes via `xdotool key ctrl+v`. Shows "Düzeltildi" notification on success. System prompt overridable via `REPHRASE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[rephrase].model` or `REPHRASE_MODEL`).
+`voxtype-rephrase` — binds to **Ctrl+Alt+R** (via xbindkeys). Reads PRIMARY/CLIPBOARD selection, rewrites via Groq (5s timeout, temp 0.3, max 20000 chars input), pastes via `xdotool key ctrl+v` (or `ctrl+shift+v` in terminals). Shows "Düzeltildi" notification on success. System prompt overridable via `REPHRASE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[rephrase].model` or `REPHRASE_MODEL`).
 
 ## Text summarize
 
-`voxtype-summarize` — binds to **Ctrl+Alt+S** (via xbindkeys only — GNOME shortcut intentionally skipped to avoid the settings daemon grabbing the key). Reads PRIMARY/CLIPBOARD selection, summarizes via Groq (10s timeout, temp 0.15, max 30000 chars input), shows "Özetleniyor..." notification on start + GTK3 popup near mouse cursor with result. Auto-closes popup after 30s or on click/Escape/q. System prompt overridable via `SUMMARIZE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[summarize].model` or `SUMMARIZE_MODEL`).
+`voxtype-summarize` — binds to **Ctrl+Alt+S** (via xbindkeys only — GNOME shortcut intentionally skipped to avoid the settings daemon grabbing the key). Reads PRIMARY/CLIPBOARD selection, summarizes via Groq (10s timeout, temp 0.15, max 24000 chars input), shows "Özetleniyor..." notification on start + GTK3 popup near mouse cursor with result. Auto-closes popup after 30s or on click/Escape/q. System prompt overridable via `SUMMARIZE_STYLE` env var. Model defaults to `qwen/qwen3.6-27b` (overridable via `[summarize].model` or `SUMMARIZE_MODEL`).
 
-Keybinding is handled by xbindkeys (systemd user service, autostarted). GNOME custom shortcut is also set during install for fallback.
+Keybinding is handled by xbindkeys (systemd user service, autostarted).
 
 ## Terminal detection
 
-`scripts/voxtype-paste-active:33` maintains a terminal match list (`kitty`, `alacritty`, `ghostty`, `wezterm`, `konsole`, `ptyxis`, `kgx`, `tilix`, `terminal`, `console`). Add new terminals here if they need `ctrl+shift+v` instead of `ctrl+v`.
+`scripts/voxtype-paste-active:33` and `scripts/voxtype-rephrase` maintain a terminal match list (`kitty`, `alacritty`, `ghostty`, `wezterm`, `konsole`, `ptyxis`, `kgx`, `tilix`, `terminal`, `console`). Add new terminals here if they need `ctrl+shift+v` instead of `ctrl+v`.
 
 ## Output delivery
 
@@ -78,7 +78,7 @@ User must be in `input` group (hotkey evdev + modifier-release guard). Takes eff
 make lint   # bash -n + py_compile + sh -n sweep
 ```
 
-No CI, no test files. `benchmark.py` at repo root is a manual tool — benchmarks model/reasoning combos against `example-phrase.md` via Groq API.
+No CI, no test files.
 
 ## Documentation
 
