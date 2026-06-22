@@ -10,6 +10,7 @@
 #   ./install.sh --yes            non-interactive: assume --yes to prompts
 #   ./install.sh --uninstall      remove config + scripts + service
 #   ./install.sh --no-model       skip Whisper model download
+#   ./install.sh --calibrate-mic  run microphone gain calibration
 #
 # Auth (in priority order):
 #   1. $GROQ_API_KEY already set in the environment
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)     ASSUME_YES=1; shift ;;
     --uninstall)  MODE="uninstall"; shift ;;
     --no-model)   SKIP_MODEL=1; shift ;;
+    --calibrate-mic) MODE="calibrate-mic"; shift ;;
     -h|--help)
       sed -n '2,16p' "$0"
       exit 0
@@ -268,6 +270,8 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-summarize"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-tray" \
       "$SCRIPT_DST_DIR/voxtype-tray"
+    install -m 0755 "$SCRIPT_SRC_DIR/voxtype-calibrate-mic" \
+      "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
     rendered="$(mktemp)"
     sed -e "s|\${REPHRASE_BIND}|$REPHRASE_BIND|g" \
          -e "s|\${SUMMARIZE_BIND}|$SUMMARIZE_BIND|g" \
@@ -526,6 +530,9 @@ case "$MODE" in
   check)
     echo "[CHECK] verifying existing install state"
     verify
+    ;;
+  calibrate-mic)
+    "${SCRIPT_DST_DIR}/voxtype-calibrate-mic"
     ;;
   uninstall)
     do_uninstall

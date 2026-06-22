@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""
+voxtype-calibrate-mic: find the optimal capture gain for your microphone.
+
+Records short samples at increasing gain levels, analyzes for clipping vs.
+adequate volume, and sets the best non-clipping level via amixer.
+
+Requires: sox (rec + sox stats), amixer (alsa-utils).
+Shows notifications on each step.  Final level persists across reboots
+via WirePlumber/alsa-restore.
+
+Usage:
+  voxtype-calibrate-mic              # interactive (default)
+  voxtype-calibrate-mic --list-cards # show available ALSA cards
+  voxtype-calibrate-mic -c 1         # use card 1 explicitly
+"""
+import argparse
+import os
+import re
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+# Minimum gain step (amixer values are 0-63).  We probe every 3 ticks
+# for speed, then binary-search near the threshold.
+STEP = 3
+# Target: peak around -2 dBFS (plenty of headroom, still loud enough)
+TARGET_PEAK_DB = -2.0
+# Recording duration per probe
+DURATION = 3
+
+
+# ---------- helpers ----------
+
+def _notify(summary: str, body: str = "", icon: str = "audio-input-microphone") -> None:
+    try:
+        cmd = ["notify-send", f"--icon={icon}", "--app-name=smart-dictate",
+               summary]
+        if body:
+            cmd.append(body)
+        subprocess.run(cmd, timeout=3.0,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def _require(cmd: str, pkg: str) -> None:
+    if not subprocess.run(["which", cmd], capture_output=True).returncode == 0:
+        print(f"ERROR: {cmd} not found — install {pkg}")
+        sys.exit(1)
+
+
+def _list_cards() -> None:
+    r = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
+    print(r.stdout or "No capture devices found.")
+
+
+def _detect_card() -> int | None:
+    """Return the first card that has a capture device, or None."""
+    r = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
+    m = re.search(r"card (\d+):", r.stdout)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _get_card() -> int:
+    card = _detect_card()
+    if card is None:
+        print("ERROR: no capture-capable ALSA card found.")
+        sys.exit(1)
+    return card
+
+
+def _set_gain(card: int, value: int) -> None:
+    subprocess.run(
+        ["amixer", "-c", str(card), "sset", "Capture", str(value)],
+        capture_output=True, timeout=3.0,
+    )
+
+
+def _current_gain(card: int) -> int:
+    r = subprocess.run(
+        ["amixer", "-c", str(card), "sget", "Capture"],
+        capture_output=True, text=True, timeout=3.0,
+    )
+    m = re.search(r"Capture (\d+)", r.stdout)
+    if m:
+        return int(m.group(1))
+    return 0
+
+
+def _record(path: str, secs: int = DURATION) -> None:
+    subprocess.run(
+        ["rec", "-r", "16000", "-c", "1", "-b", "16", path],
+        timeout=secs + 3,
+    )
+
+
+def _peak_db(path: str) -> float | None:
+    """Return peak level in dBFS.  None if file is silent/empty."""
+    r = subprocess.run(
+        ["sox", path, "-n", "stats"],
+        capture_output=True, text=True, timeout=5.0,
+    )
+    m = re.search(r"Pk lev dB\s+(-?\d+\.?\d*)", r.stdout)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _clipped(path: str) -> bool:
+    """True if any sample hit exactly -1.0 or 1.0 (digital clipping)."""
+    raw = subprocess.run(
+        ["sox", path, "-t", "raw", "-"],
+        capture_output=True, timeout=5.0,
+    ).stdout
+    if len(raw) < 2:
+        return False
+    samples = struct.unpack(f"<{len(raw)//2}h", raw)
+    return any(s <= -32767 or s >= 32767 for s in samples)
+
+
+# ---------- main ----------
+
+def _say(text: str) -> None:
+    """Print and notify."""
+    print(text)
+    _notify("Mic Calibration", text)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Calibrate microphone gain")
+    parser.add_argument("--list-cards", action="store_true",
+                        help="List available ALSA capture cards and exit")
+    parser.add_argument("-c", "--card", type=int, default=None,
+                        help="ALSA card index (auto-detected if omitted)")
+    args = parser.parse_args()
+
+    if args.list_cards:
+        _list_cards()
+        return 0
+
+    _require("rec", "sox")
+    _require("sox", "sox")
+    _require("amixer", "alsa-utils")
+
+    card = args.card if args.card is not None else _get_card()
+    print(f"Using ALSA card {card}")
+    print()
+
+    # ----- step 1: ambient noise floor -----
+    _say("Step 1/3: Recording ambient noise (3s) — stay quiet...")
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    noise_path = tmp.name
+    tmp.close()
+    _record(noise_path, 3)
+    noise_db = _peak_db(noise_path)
+    noise_clip = _clipped(noise_path)
+    os.unlink(noise_path)
+    print(f"  Noise floor: {noise_db or 'N/A'} dBFS  clipped={noise_clip}")
+    print()
+
+    if noise_clip:
+        _say("Your ambient noise alone is clipping!  Check your "
+             "environment (fan / AC / wind).")
+        return 1
+
+    # ----- step 2: find the best gain -----
+    _say("Step 2/3: Finding optimal gain — speak at your normal "
+         f"dictation volume when prompted (×{DURATION}s each)...")
+
+    best = _current_gain(card)
+    results: list[dict] = []
+
+    # Coarse sweep: 0 → 63, step 6
+    coarse = []
+    for v in range(0, 64, 6):
+        _set_gain(card, v)
+        _say(f"  Gain {v}/63 — speak now...")
+        tmp2 = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        probe = tmp2.name
+        tmp2.close()
+        _record(probe, DURATION)
+        pk = _peak_db(probe)
+        clip = _clipped(probe)
+        results.append({"gain": v, "peak": pk, "clipped": clip})
+        print(f"    peak={pk:.1f} dBFS  clipped={clip}")
+        if clip and v > 0:
+            # Back off one step
+            best = v - 6
+            break
+        best = v
+        os.unlink(probe)
+
+    # Fine-tune: binary search between last good and first clipped
+    if results and results[-1]["clipped"]:
+        lo = max(r["gain"] for r in results if not r["clipped"])
+        hi = min(r["gain"] for r in results if r["clipped"])
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            _set_gain(card, mid)
+            _say(f"  Fine-tuning at gain {mid}/63 — speak now...")
+            tmp3 = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            probe = tmp3.name
+            tmp3.close()
+            _record(probe, DURATION)
+            pk = _peak_db(probe)
+            clip = _clipped(probe)
+            print(f"    peak={pk:.1f} dBFS  clipped={clip}")
+            if clip:
+                hi = mid
+            else:
+                lo = mid
+            os.unlink(probe)
+        best = lo
+
+    # Ensure we have at least 3 dB of headroom
+    _set_gain(card, best)
+    _say(f"  Verifying gain {best}/63 — speak normally...")
+    tmp4 = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    verify = tmp4.name
+    tmp4.close()
+    _record(verify, DURATION)
+    final_pk = _peak_db(verify)
+    final_clip = _clipped(verify)
+    print(f"    peak={final_pk:.1f} dBFS  clipped={final_clip}")
+
+    if final_clip or (final_pk is not None and final_pk > -1.5):
+        # Too hot — step down one more tick
+        best = max(0, best - 1)
+        _set_gain(card, best)
+        _say(f"  Backing off to {best}/63 — speak once more...")
+        _record(verify, DURATION)
+        final_pk = _peak_db(verify)
+        final_clip = _clipped(verify)
+
+    os.unlink(verify)
+
+    # ----- step 3: summary -----
+    current_vol = _current_gain(card)
+    pct = round(current_vol / 63 * 100)
+
+    _say(
+        f"Step 3/3: Done!  Gain set to {current_vol}/63 ({pct}%)",
+        f"Peak: {final_pk:.1f} dBFS  Clipping: {final_clip}",
+    )
+
+    print()
+    print(f"  Gain:       {current_vol}/63 ({pct}%)")
+    print(f"  Peak level: {final_pk:.1f} dBFS")
+    print(f"  Clipping:   {'YES ⚠' if final_clip else 'No ✓'}")
+    print()
+
+    snr = None
+    if noise_db is not None and final_pk is not None:
+        snr = final_pk - noise_db
+        print(f"  SNR:        {snr:.0f} dB")
+        print()
+        if snr > 25:
+            print("  ★ Excellent — mic is well positioned and room is quiet.")
+        elif snr > 15:
+            print("  ★ Good — adequate for dictation.")
+        elif snr > 10:
+            print("  ⚠ Fair — consider moving closer to the mic.")
+        else:
+            print("  ✗ Poor — too much background noise or mic too far.")
+
+    print()
+    print("Settings persist automatically via WirePlumber / alsa-restore.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

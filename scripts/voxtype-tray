@@ -170,6 +170,15 @@ class TrayIndicator:
 
         menu.append(Gtk.SeparatorMenuItem())
 
+        item = Gtk.MenuItem(label="Calibrate Microphone")
+        item.connect("activate", lambda *_: subprocess.Popen(
+            ["voxtype-calibrate-mic"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ))
+        menu.append(item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
         item = Gtk.MenuItem(label="Quit")
         item.connect("activate", lambda *_: Gtk.main_quit())
         menu.append(item)
