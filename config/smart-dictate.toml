@@ -40,8 +40,14 @@ model = "qwen/qwen3.6-27b"
 # API endpoint (change to use a different provider with OpenAI-compatible API)
 endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
-# API key (optional — falls back to GROQ_API_KEY env var,
-# then to ~/.config/voxtype/groq-api-key)
+# API key resolution order:
+#   1. GROQ_API_KEY environment variable
+#   2. this file's api_key field (below)
+#   3. ~/.config/voxtype/groq-api-key  (written 0600 by the installer)
+#
+# Prefer the key file or the env var. This config is installed mode 0600,
+# but the dedicated key file is the recommended place for the secret — keep
+# the key out of files you might share, sync, or commit.
 # api_key = "gsk_..."
 
 [dictation]

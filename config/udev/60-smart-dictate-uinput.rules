@@ -1,0 +1,11 @@
+# smart-dictate: let the 'input' group open /dev/uinput so ydotoold can run
+# as a normal user service for Wayland keystroke injection (auto-paste).
+#
+# The installer adds the user to the 'input' group; this rule grants that
+# group read/write on the uinput node and ensures the static node carries
+# the same ownership if it is created before the module loads.
+#
+# Installed to /etc/udev/rules.d/ by install.sh. Takes effect after
+# `udevadm control --reload-rules && udevadm trigger` (the installer runs
+# both) plus a logout/login for the 'input' group membership.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

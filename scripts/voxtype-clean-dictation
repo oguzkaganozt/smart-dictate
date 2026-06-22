@@ -23,42 +23,20 @@ Config precedence (highest first):
 - ~/.config/smart-dictate/config.toml
 - Script defaults
 """
-import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import urllib.error
-import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _voxtype_groq as groq  # noqa: E402
 
 
-CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
-KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
+_cfg = groq.load_config("groq", "dictation")
 
-
-def _load_config() -> dict:
-    cfg = {"groq": {}, "dictation": {}}
-    if CONFIG_PATH.exists():
-        try:
-            import tomllib
-            with open(CONFIG_PATH, "rb") as f:
-                data = tomllib.load(f)
-            if "groq" in data:
-                cfg["groq"] = data["groq"]
-            if "dictation" in data:
-                cfg["dictation"] = data["dictation"]
-        except Exception:
-            pass
-    return cfg
-
-
-_cfg = _load_config()
-
-MODEL = os.environ.get("GROQ_MODEL") or _cfg["groq"].get("model", "qwen/qwen3.6-27b")
-ENDPOINT = os.environ.get("GROQ_ENDPOINT") or _cfg["groq"].get(
-    "endpoint", "https://api.groq.com/openai/v1/chat/completions"
-)
+MODEL = groq.resolve_model(_cfg["groq"])
+ENDPOINT = groq.resolve_endpoint(_cfg["groq"])
 
 DEFAULT_PROMPT = (
     "You are an experienced Turkish/English editor. Convert ASR/dictation "
@@ -86,16 +64,9 @@ def should_skip(text: str) -> bool:
     return False
 
 
-def get_api_key() -> str:
-    key = os.environ.get("GROQ_API_KEY")
-    if key:
-        return key
-    key = _cfg["groq"].get("api_key", "")
-    if key:
-        return key
-    if KEY_FILE.exists():
-        return KEY_FILE.read_text(encoding="utf-8").strip()
-    return ""
+def output_too_long(text: str, output: str) -> bool:
+    """True if LLM output ballooned vs. the input (likely a hallucination)."""
+    return len(output) > max(len(text) * 1.5, len(text) + 120)
 
 
 def clean(text: str) -> str:
@@ -112,42 +83,18 @@ def clean(text: str) -> str:
 MET\u0130N:
 {text}"""
 
-    api_key = get_api_key()
+    api_key = groq.get_api_key(_cfg["groq"])
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not configured")
 
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.0,
-        "max_completion_tokens": 512,
-    }
-
-    if MODEL.startswith("openai/gpt-oss"):
-        payload["reasoning_effort"] = "low"
-    elif MODEL.startswith("qwen/"):
-        payload["reasoning_effort"] = "none"
-
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "voxtype-dictation-cleaner/1.0",
-        },
+    # Dictation needs a small, fast cap (short snippets); not the TPM budget.
+    payload = groq.build_payload(
+        MODEL, system, user, temperature=0.0, max_completion_tokens=512,
     )
-
-    with urllib.request.urlopen(req, timeout=5.0) as response:
-        data = json.loads(response.read().decode("utf-8"))
-
-    choices = data.get("choices") or []
-    output = choices[0].get("message", {}).get("content", "").strip() if choices else ""
-    output = output.strip('"').strip()
-    return output
+    return groq.call_groq(
+        ENDPOINT, api_key, payload, timeout=5.0,
+        user_agent="voxtype-dictation-cleaner/1.0",
+    )
 
 
 def _notify(text: str) -> None:
@@ -191,7 +138,7 @@ def main() -> int:
         _notify(text)
         return 0
 
-    if len(output) > max(len(text) * 1.5, len(text) + 120):
+    if output_too_long(text, output):
         sys.stdout.write(original)
         _notify(text)
         return 0

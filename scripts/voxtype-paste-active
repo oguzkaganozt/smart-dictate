@@ -2,13 +2,20 @@
 # voxtype-paste-active: paste the just-copied dictation into the focused window.
 #
 # Designed as the `post_output_command` for VoxType. VoxType has already
-# copied the cleaned text to the X11 clipboard via xclip; this hook just
-# fires Ctrl+V (or Ctrl+Shift+V in a terminal so the shell receives a
-# paste event instead of treating ^V as literal-input).
+# copied the cleaned text to the clipboard; this hook just fires Ctrl+V
+# (or Ctrl+Shift+V in a terminal so the shell receives a paste event
+# instead of treating ^V as literal-input).
 #
-# Detection is intentionally lightweight (lower-cased class + WM_CLASS +
-# window name substring match). Add more terminals to the case list if
-# yours is missing.
+# Session-aware: uses xdotool on X11/XWayland and ydotool (preferred) or
+# wtype on Wayland. If no working keystroke injector is available (e.g.
+# GNOME Wayland without a running ydotoold), the text still lives on the
+# clipboard and we notify the user to paste manually instead of failing
+# silently.
+#
+# Terminal detection is intentionally lightweight (lower-cased class +
+# WM_CLASS + window name substring match). Add more terminals to the case
+# list if yours is missing. Detection relies on xdotool/xprop, so on pure
+# Wayland (no XWayland window info) it falls back to the plain Ctrl+V combo.
 
 set -eu
 
@@ -16,24 +23,95 @@ set -eu
 # window info and fire the paste keystroke.
 sleep 0.05
 
-window_id="$(xdotool getactivewindow 2>/dev/null || true)"
-window_class=""
-wm_class=""
-window_name=""
-
-if [ -n "$window_id" ]; then
-  window_class="$(xdotool getwindowclassname "$window_id" 2>/dev/null || true)"
-  wm_class="$(xprop -id "$window_id" WM_CLASS 2>/dev/null || true)"
-  window_name="$(xdotool getwindowname "$window_id" 2>/dev/null || true)"
+# --- session detection -------------------------------------------------
+session="${XDG_SESSION_TYPE:-}"
+if [ -z "$session" ]; then
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    session="wayland"
+  elif [ -n "${DISPLAY:-}" ]; then
+    session="x11"
+  fi
 fi
 
-target="$(printf '%s %s %s' "$window_class" "$wm_class" "$window_name" | tr '[:upper:]' '[:lower:]')"
+# ydotool reaches ydotoold over this socket (see config/systemd/ydotoold.service,
+# which sets --socket-path=%t/.ydotool_socket). Match it here so the client and
+# daemon agree even when this hook runs without a full login environment.
+: "${YDOTOOL_SOCKET:=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.ydotool_socket}"
+export YDOTOOL_SOCKET
+
+# --- terminal detection (best effort, X11/XWayland only) ---------------
+target=""
+if command -v xdotool >/dev/null 2>&1; then
+  window_id="$(xdotool getactivewindow 2>/dev/null || true)"
+  if [ -n "$window_id" ]; then
+    window_class="$(xdotool getwindowclassname "$window_id" 2>/dev/null || true)"
+    wm_class="$(xprop -id "$window_id" WM_CLASS 2>/dev/null || true)"
+    window_name="$(xdotool getwindowname "$window_id" 2>/dev/null || true)"
+    target="$(printf '%s %s %s' "$window_class" "$wm_class" "$window_name" \
+      | tr '[:upper:]' '[:lower:]')"
+  fi
+fi
 
 case "$target" in
   *terminal*|*console*|*ptyxis*|*kgx*|*konsole*|*tilix*|*kitty*|*alacritty*|*wezterm*|*ghostty*)
-    xdotool key --clearmodifiers ctrl+shift+v
+    combo="terminal"
     ;;
   *)
-    xdotool key --clearmodifiers ctrl+v
+    combo="normal"
     ;;
 esac
+
+# --- keystroke injection -----------------------------------------------
+# ydotool uses Linux input-event keycodes: LEFTCTRL=29, LEFTSHIFT=42, V=47.
+paste_x11() {
+  if [ "$combo" = "terminal" ]; then
+    xdotool key --clearmodifiers ctrl+shift+v
+  else
+    xdotool key --clearmodifiers ctrl+v
+  fi
+}
+
+paste_ydotool() {
+  if [ "$combo" = "terminal" ]; then
+    ydotool key 29:1 42:1 47:1 47:0 42:0 29:0
+  else
+    ydotool key 29:1 47:1 47:0 29:0
+  fi
+}
+
+paste_wtype() {
+  if [ "$combo" = "terminal" ]; then
+    wtype -M ctrl -M shift v -m shift -m ctrl
+  else
+    wtype -M ctrl v -m ctrl
+  fi
+}
+
+do_paste() {
+  case "$session" in
+    wayland)
+      if command -v ydotool >/dev/null 2>&1 && paste_ydotool 2>/dev/null; then
+        return 0
+      fi
+      if command -v wtype >/dev/null 2>&1 && paste_wtype 2>/dev/null; then
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      # x11, XWayland, or unknown-but-DISPLAY-set: xdotool.
+      if command -v xdotool >/dev/null 2>&1 && paste_x11 2>/dev/null; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+}
+
+if ! do_paste; then
+  # Clipboard already holds the text; the auto-paste keystroke could not be
+  # delivered (common on Wayland without ydotoold). Tell the user.
+  notify-send --icon=edit-paste --app-name=smart-dictate \
+    "Panoya kopyalandı" "Yapıştırmak için Ctrl+V'ye basın" \
+    >/dev/null 2>&1 || true
+fi

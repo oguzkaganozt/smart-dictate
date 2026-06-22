@@ -44,7 +44,16 @@ Notifications are fire-and-forget (failures silently ignored).
 - `scripts/voxtype-tray` — system tray indicator (GTK3 StatusIcon / Ayatana AppIndicator3). Right-click menu includes "Calibrate Microphone" which runs `voxtype-calibrate-mic`.
 - `scripts/voxtype-calibrate-mic` — interactive mic gain calibration. Records noise + speech samples at increasing gain levels, targets safe speech headroom instead of the loudest possible gain, and sets it via amixer. Run with `./install.sh --calibrate-mic` or from the tray menu.
 - `scripts/smart-dictate` — stdlib-only CLI for status/check/upgrade/uninstall wrappers. `upgrade` downloads latest GitHub release, verifies SHA256SUMS, runs `install.sh --yes`, then restarts user services.
-- `scripts/voxtype-paste-active` — shell script, X11-only (xdotool + xprop).
+- `scripts/voxtype-paste-active` — shell script, session-aware: `xdotool` on
+  X11/XWayland, `ydotool` (preferred) or `wtype` on Wayland. Terminal detection
+  via xdotool/xprop is X11/XWayland-only; on pure Wayland it falls back to plain
+  Ctrl+V. If no injector succeeds, it `notify-send`s the user to paste manually.
+  Wayland keystroke injection needs `ydotoold` + the
+  `60-smart-dictate-uinput.rules` udev rule. **`ydotoold` is NOT packaged on
+  Ubuntu** (the `ydotool` apt package ships only the client), so `install.sh`
+  deploys/enables the `ydotoold.service` unit and the udev rule **only when a
+  `ydotoold` binary is present** (`command -v ydotoold`). Without it, Wayland
+  paste falls back to wtype → "press Ctrl+V" notification; X11 is unaffected.
 - All Python scripts use **stdlib only** (no pip dependencies). Require **Python 3.11+** (`tomllib`).
 - Model-specific payload fields: if model starts with `openai/gpt-oss`, payload uses `reasoning_effort: "low"`. If starts with `qwen/`, uses `reasoning_effort: "none"`. See `voxtype-clean-dictation:129-132`.
 - Config file `~/.config/smart-dictate/config.toml` is read at import time. Env vars (`GROQ_MODEL`, `GROQ_ENDPOINT`, `GROQ_API_KEY`, `REPHRASE_MODEL`, `REPHRASE_ENDPOINT`, `REPHRASE_STYLE`, `SUMMARIZE_MODEL`, `SUMMARIZE_ENDPOINT`, `SUMMARIZE_STYLE`) override config values at runtime.
@@ -80,7 +89,11 @@ User must be in `input` group (hotkey evdev + modifier-release guard). Takes eff
 
 ```sh
 make lint   # bash -n + py_compile + sh -n sweep
+make test   # stdlib unittest suite (tests/) — pure dictation logic
 ```
+
+CI (`.github/workflows/ci.yml`) runs `make lint` + `make test` + `shellcheck`
+on every PR and push to `main`.
 
 Release workflow: `.github/workflows/release.yml` runs `make lint` on `v*` tags, builds a source tarball, writes the tag into bundled `VERSION`, writes `SHA256SUMS`, and uploads both to the GitHub release. No test files.
 

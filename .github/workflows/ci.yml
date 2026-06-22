@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint and test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint (bash -n + py_compile + sh -n)
+        run: make lint
+
+      - name: Unit tests
+        run: make test
+
+      - name: shellcheck
+        run: shellcheck install.sh bootstrap.sh scripts/voxtype-paste-active

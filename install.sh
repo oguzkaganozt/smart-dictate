@@ -37,7 +37,15 @@ SCRIPT_DST_DIR="${XDG_LOCAL_BIN:-$HOME/.local/bin}"
 SMART_DICTATE_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/smart-dictate"
 SMART_DICTATE_SOURCE_DST="$SMART_DICTATE_DATA_DIR/source"
 
+UDEV_RULE_SRC="$SCRIPT_DIR/config/udev/60-smart-dictate-uinput.rules"
+UDEV_RULE_DST="/etc/udev/rules.d/60-smart-dictate-uinput.rules"
+
 VOXTYPE_DEB_URL="https://github.com/peteonrails/voxtype/releases/download/v0.7.5/voxtype_0.7.5-1_amd64.deb"
+# SHA256 of the pinned .deb above. The downloaded file is verified against this
+# before install (a compromised/changed upstream asset aborts the install).
+# Override both URL and SHA256 to install a different VoxType build; set the
+# SHA256 to empty to skip verification (not recommended).
+VOXTYPE_DEB_SHA256="${VOXTYPE_DEB_SHA256:-5ebecde2ba194ed24ab35ba6b9f01542c0692c804dbba6f1d0cd066afda0148d}"
 VOXTYPE_DEB_TMP="/tmp/voxtype-install.deb"
 
 # ---------- flags ----------
@@ -98,8 +106,10 @@ maybe_sudo() {
 # ---------- env loading ----------
 load_env() {
   if [[ -z "${GROQ_API_KEY:-}" && -f "$SCRIPT_DIR/.env" ]]; then
+    set -a
     # shellcheck disable=SC1091
-    set -a; . "$SCRIPT_DIR/.env"; set +a
+    . "$SCRIPT_DIR/.env"
+    set +a
   fi
 }
 
@@ -182,6 +192,28 @@ missing_packages() {
   printf '%s\n' "${miss[@]}"
 }
 
+verify_deb_checksum() {
+  # Abort the install if the downloaded .deb doesn't match the pinned SHA256.
+  if [[ "$MODE" == "dry-run" ]]; then
+    printf '  would run: sha256 verify %s\n' "$VOXTYPE_DEB_TMP"
+    return 0
+  fi
+  if [[ -z "${VOXTYPE_DEB_SHA256:-}" ]]; then
+    warn "VOXTYPE_DEB_SHA256 empty; skipping .deb integrity check."
+    return 0
+  fi
+  local actual
+  actual="$(sha256sum "$VOXTYPE_DEB_TMP" | awk '{print $1}')"
+  if [[ "$actual" != "$VOXTYPE_DEB_SHA256" ]]; then
+    err "voxtype .deb checksum mismatch — refusing to install."
+    err "  expected: $VOXTYPE_DEB_SHA256"
+    err "  actual:   $actual"
+    rm -f "$VOXTYPE_DEB_TMP"
+    exit 1
+  fi
+  ok "voxtype .deb checksum verified"
+}
+
 step_apt_deps() {
   local missing
   missing="$(missing_packages)"
@@ -198,6 +230,7 @@ step_apt_deps() {
   if ! require_cmd voxtype; then
     log "Downloading voxtype .deb"
     run bash -c "wget -q -O '$VOXTYPE_DEB_TMP' '$VOXTYPE_DEB_URL'"
+    verify_deb_checksum
     run maybe_sudo apt-get install -y "$VOXTYPE_DEB_TMP"
     run rm -f "$VOXTYPE_DEB_TMP"
     # Re-check after installing voxtype
@@ -221,6 +254,33 @@ step_input_group() {
   fi
 }
 
+step_uinput() {
+  # Grant the 'input' group access to /dev/uinput so ydotoold can run as a
+  # user service and inject keystrokes on Wayland (auto-paste).
+  #
+  # The udev rule only matters for ydotoold (Wayland keystroke injection),
+  # which is NOT packaged on Ubuntu. If ydotoold isn't installed, skip the
+  # rule entirely — this also avoids needing sudo on the common path
+  # (X11, or Wayland without a manually-installed ydotoold).
+  if ! command -v ydotoold >/dev/null 2>&1; then
+    log "ydotoold not installed; skipping uinput udev rule (Wayland-only feature)."
+    return 0
+  fi
+  # Idempotent: if the rule is already present and identical, skip the
+  # privileged work entirely so re-deploys on a configured machine don't
+  # need sudo (matching step_apt_deps / step_input_group). Best-effort:
+  # modprobe/udevadm failures (e.g. inside containers) must not abort install.
+  if [[ -f "$UDEV_RULE_DST" ]] && cmp -s "$UDEV_RULE_SRC" "$UDEV_RULE_DST"; then
+    ok "uinput udev rule already current: $UDEV_RULE_DST"
+    return 0
+  fi
+  log "Installing uinput udev rule: $UDEV_RULE_DST"
+  run maybe_sudo install -m 0644 "$UDEV_RULE_SRC" "$UDEV_RULE_DST"
+  run maybe_sudo modprobe uinput || true
+  run maybe_sudo udevadm control --reload-rules || true
+  run maybe_sudo udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
+}
+
 step_config() {
   log "Deploying config: $VOXTYPE_CONFIG_DST"
   run mkdir -p "$(dirname "$VOXTYPE_CONFIG_DST")"
@@ -241,6 +301,10 @@ step_config() {
     install -m 0644 "$SYSTEMD_DIR/voxtype.service" "$SYSTEMD_DST_DIR/voxtype.service"
     install -m 0644 "$SYSTEMD_DIR/voxtype-tray.service" \
       "$SYSTEMD_DST_DIR/voxtype-tray.service"
+    if command -v ydotoold >/dev/null 2>&1; then
+      install -m 0644 "$SYSTEMD_DIR/ydotoold.service" \
+        "$SYSTEMD_DST_DIR/ydotoold.service"
+    fi
     install -m 0644 "$SYSTEMD_DIR/voxtype.service.d/gpu.conf" \
       "$SYSTEMD_DST_DIR/voxtype.service.d/gpu.conf"
     local rendered
@@ -255,7 +319,10 @@ step_smart_dictate_config() {
   log "Deploying smart-dictate config: $SMART_DICTATE_CONFIG_DST"
   run mkdir -p "$(dirname "$SMART_DICTATE_CONFIG_DST")"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
-    install -m 0644 "$SMART_DICTATE_CONFIG_SRC" "$SMART_DICTATE_CONFIG_DST"
+    # 0600: config.toml may hold an inline api_key = "gsk_..." (see the
+    # commented field in config/smart-dictate.toml), so keep it private even
+    # on multi-user systems regardless of whether a key is actually present.
+    install -m 0600 "$SMART_DICTATE_CONFIG_SRC" "$SMART_DICTATE_CONFIG_DST"
     if [[ -f "$VERSION_SRC" ]]; then
       install -m 0644 "$VERSION_SRC" "$SMART_DICTATE_CONFIG_DIR/version"
     else
@@ -291,6 +358,8 @@ step_scripts() {
   run mkdir -p "$SCRIPT_DST_DIR"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
     local rendered
+    install -m 0644 "$SCRIPT_SRC_DIR/_voxtype_groq.py" \
+      "$SCRIPT_DST_DIR/_voxtype_groq.py"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-clean-dictation" \
       "$SCRIPT_DST_DIR/voxtype-clean-dictation"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-paste-active" \
@@ -374,13 +443,27 @@ step_model() {
 
 step_service() {
   if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
-    log "Would: systemctl --user daemon-reload && enable --now voxtype + voxtype-tray + xbindkeys"
+    extra_ydotoold=""
+    command -v ydotoold >/dev/null 2>&1 && extra_ydotoold=" + ydotoold"
+    log "Would: systemctl --user daemon-reload && enable --now voxtype + voxtype-tray + xbindkeys${extra_ydotoold}"
     return 0
   fi
 
   log "Reloading systemd user manager + enabling services"
   systemctl --user daemon-reload
   systemctl --user enable --now voxtype.service voxtype-tray.service xbindkeys.service
+  # ydotoold powers Wayland keystroke injection, but it is NOT packaged on
+  # Ubuntu. Only enable it when the daemon is actually installed; otherwise
+  # voxtype-paste-active degrades gracefully (wtype, then a "press Ctrl+V"
+  # notification). On X11 this is irrelevant — xdotool handles the paste.
+  if command -v ydotoold >/dev/null 2>&1; then
+    if ! systemctl --user enable --now ydotoold.service; then
+      warn "ydotoold.service failed to start (logout/login may be needed for /dev/uinput);"
+      warn "Wayland auto-paste will activate once it runs."
+    fi
+  else
+    warn "ydotoold not installed — Wayland auto-paste unavailable (X11 uses xdotool)."
+  fi
   sleep 1
   systemctl --user --no-pager --full status voxtype.service || true
 }
@@ -471,6 +554,13 @@ verify() {
   else
     err "service:  $SYSTEMD_DST_DIR/voxtype-tray.service MISSING"; fail=1
   fi
+  if command -v ydotoold >/dev/null 2>&1; then
+    if [[ -f "$SYSTEMD_DST_DIR/ydotoold.service" ]]; then
+      ok "service:  $SYSTEMD_DST_DIR/ydotoold.service"
+    else
+      err "service:  $SYSTEMD_DST_DIR/ydotoold.service MISSING"; fail=1
+    fi
+  fi
   if [[ -f "$SYSTEMD_DST_DIR/xbindkeys.service" ]]; then
     ok "service:  $SYSTEMD_DST_DIR/xbindkeys.service"
   else
@@ -517,6 +607,7 @@ do_uninstall() {
   systemctl --user disable --now voxtype.service 2>/dev/null || true
   systemctl --user disable --now voxtype-tray.service 2>/dev/null || true
   systemctl --user disable --now xbindkeys.service 2>/dev/null || true
+  systemctl --user disable --now ydotoold.service 2>/dev/null || true
 
   log "Removing config, scripts, systemd units"
   rm -f  "$SYSTEMD_DST_DIR/voxtype.service"
@@ -529,8 +620,16 @@ do_uninstall() {
   rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
   rm -f  "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
   rm -f  "$SCRIPT_DST_DIR/smart-dictate"
+  rm -f  "$SCRIPT_DST_DIR/_voxtype_groq.py"
   rm -f  "$HOME/.xbindkeysrc"
   rm -f  "$SYSTEMD_DST_DIR/xbindkeys.service"
+  rm -f  "$SYSTEMD_DST_DIR/ydotoold.service"
+
+  if [[ -f "$UDEV_RULE_DST" ]]; then
+    log "Removing uinput udev rule: $UDEV_RULE_DST"
+    maybe_sudo rm -f "$UDEV_RULE_DST" || true
+    maybe_sudo udevadm control --reload-rules || true
+  fi
 
   if [[ "${KEEP_CONFIG:-0}" != "1" ]]; then
     rm -f "$VOXTYPE_CONFIG_DST"
@@ -559,6 +658,7 @@ case "$MODE" in
     prompt_shortcuts
     step_apt_deps
     step_input_group
+    step_uinput
     step_config
     step_smart_dictate_config
     step_source_tree
@@ -574,6 +674,7 @@ case "$MODE" in
     echo "[DRY-RUN] no changes will be made"
     step_apt_deps
     step_input_group
+    step_uinput
     step_config
     step_smart_dictate_config
     step_source_tree
