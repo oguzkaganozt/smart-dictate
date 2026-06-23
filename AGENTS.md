@@ -5,7 +5,7 @@ Ubuntu 24.04 push-to-talk voice-to-text pipeline (VoxType + Whisper large-v3-tur
 ## Entry points
 
 - `./install.sh` — single bootstrap. Flags: `--check` (verify), `--dry-run`, `--yes`, `--uninstall`, `--no-model`.
-- `bootstrap.sh` — curl-friendly installer. Downloads latest GitHub release tarball, verifies `SHA256SUMS`, and runs bundled `install.sh`.
+- `install.sh` — single entry point. When run without local source files (e.g. piped from curl), downloads the latest release tarball, verifies `SHA256SUMS`, and re-execs itself from the bundle.
 - `smart-dictate` — installed CLI. Commands: `status`, `check`, `check-updates`, `upgrade`, `restart`, `calibrate-mic`, `install`, `uninstall`, `version`.
 - `make install|uninstall|check|dry-run|status|clean-api-key|lint` — pass-through aliases.
 - `make uninstall` → `./install.sh --uninstall`. Env knobs: `KEEP_CONFIG=1`, `KEEP_MODEL=1` (preserve model data). Defaults: both removed.

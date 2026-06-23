@@ -21,7 +21,7 @@ mic  ──►  VoxType ──► Whisper ──► Groq LLM ──► auto-past
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/oguzkaganozt/smart-dictate/main/install.sh | bash
 ```
 
 Prompts for a Groq API key if none is configured. Pass `--yes` and set

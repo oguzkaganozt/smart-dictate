@@ -31,12 +31,13 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are a ruthless summarizer. Condense the text to its absolute "
     "essence — only key facts, numbers, and conclusions. "
     "Eliminate all examples, explanations, context, and repetition. "
-    "Each bullet must be a single short phrase or sentence, max 15 words. "
-    "Output at most 6 bullet points, preferably fewer. "
+    "Use a short descriptive title, max 6 words. "
+    "Then output 3-6 bullets. Each bullet must be one short phrase or "
+    "sentence, max 18 words. When a bullet has a clear topic, start with "
+    "a 1-4 word bold label followed by a colon, like '- **Risk:** ...'. "
     "PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output "
     "in Turkish; if English, output in English. "
-    "Start with a short descriptive title (max 6 words) on its own line "
-    "prefixed with '## '. "
+    "Start the title on its own line prefixed with '## '. "
     "Output the title and bullet points only — "
     "no introductions, no commentary, no closing."
 )
@@ -107,14 +108,34 @@ def _insert_md(
         if m.start() > pos:
             buffer.insert_with_tags(it, text[pos : m.start()], base_tag)
         if m.group(1) is not None:
-            buffer.insert_with_tags(it, m.group(1), bold_tag)
+            buffer.insert_with_tags(it, m.group(1), base_tag, bold_tag)
         elif m.group(2) is not None:
-            buffer.insert_with_tags(it, m.group(2), code_tag)
+            buffer.insert_with_tags(it, m.group(2), base_tag, code_tag)
         elif m.group(3) is not None:
-            buffer.insert_with_tags(it, m.group(3), italic_tag)
+            buffer.insert_with_tags(it, m.group(3), base_tag, italic_tag)
         pos = m.end()
     if pos < len(text):
         buffer.insert_with_tags(it, text[pos:], base_tag)
+
+
+def _insert_bullet_text(
+    buffer: "GtkTextBuffer",
+    it: "GtkTextIter",
+    text: str,
+    base_tag: "GtkTextTag",
+    bold_tag: "GtkTextTag",
+    code_tag: "GtkTextTag",
+    italic_tag: "GtkTextTag",
+) -> None:
+    # If the model returns "Topic: detail" instead of Markdown, still make the
+    # topic scannable. Avoid over-boldening sentences with late punctuation.
+    m = re.match(r"^([^:]{2,48}:)\s+(.+)$", text)
+    if m and not any(ch in m.group(1) for ch in ".;?!"):
+        buffer.insert_with_tags(it, m.group(1), base_tag, bold_tag)
+        buffer.insert(it, " ")
+        _insert_md(buffer, it, m.group(2), base_tag, bold_tag, code_tag, italic_tag)
+        return
+    _insert_md(buffer, it, text, base_tag, bold_tag, code_tag, italic_tag)
 
 
 def _build_buffer(buffer: "GtkTextBuffer", text: str) -> None:
@@ -122,36 +143,40 @@ def _build_buffer(buffer: "GtkTextBuffer", text: str) -> None:
 
     font_desc = Pango.FontDescription()
     font_desc.set_family("Cantarell, Segoe UI, sans-serif")
-    font_desc.set_size(13 * Pango.SCALE)
+    font_desc.set_size(9 * Pango.SCALE)
 
     heading_tag = buffer.create_tag(
         "heading",
         font_desc=font_desc,
         weight=Pango.Weight.BOLD,
-        scale=1.15,
-        foreground="#111827",
-        pixels_above_lines=6,
-        pixels_below_lines=2,
+        scale=1.18,
+        foreground="#0f172a",
+        pixels_above_lines=2,
+        pixels_below_lines=10,
     )
     body_tag = buffer.create_tag(
         "body",
         font_desc=font_desc,
-        foreground="#4b5563",
-        pixels_above_lines=2,
-        pixels_below_lines=2,
+        foreground="#334155",
+        pixels_above_lines=1,
+        pixels_below_lines=5,
     )
     bullet_tag = buffer.create_tag(
         "bullet",
         font_desc=font_desc,
-        foreground="#4b5563",
-        pixels_above_lines=2,
-        pixels_below_lines=2,
-        left_margin=22,
+        foreground="#334155",
+        pixels_above_lines=3,
+        pixels_below_lines=8,
+        left_margin=18,
+        indent=-10,
     )
     bullet_marker_tag = buffer.create_tag(
         "bullet_marker",
         font_desc=font_desc,
-        foreground="#9ca3af",
+        weight=Pango.Weight.BOLD,
+        foreground="#2563eb",
+        pixels_above_lines=3,
+        pixels_below_lines=8,
     )
     bold_tag = buffer.create_tag(
         "bold",
@@ -161,9 +186,9 @@ def _build_buffer(buffer: "GtkTextBuffer", text: str) -> None:
     code_tag = buffer.create_tag(
         "code",
         family="monospace",
-        size=12 * Pango.SCALE,
-        foreground="#d14",
-        background="#f5f5f5",
+        size=9 * Pango.SCALE,
+        foreground="#9f1239",
+        background="#f1f5f9",
     )
     italic_tag = buffer.create_tag(
         "italic",
@@ -184,10 +209,10 @@ def _build_buffer(buffer: "GtkTextBuffer", text: str) -> None:
             and s[1] == " "
         ):
             content = s[2:].lstrip()
-            buffer.insert(it, "  ")
-            buffer.insert_with_tags(it, "\u25b8", bullet_marker_tag)
-            buffer.insert(it, "  ")
-            _insert_md(buffer, it, content, bullet_tag, bold_tag, code_tag, italic_tag)
+            buffer.insert_with_tags(it, "\u2022 ", bullet_marker_tag)
+            _insert_bullet_text(
+                buffer, it, content, bullet_tag, bold_tag, code_tag, italic_tag,
+            )
         else:
             _insert_md(buffer, it, s, body_tag, bold_tag, code_tag, italic_tag)
         buffer.insert(it, "\n")
@@ -201,18 +226,18 @@ def show_popup(text: str) -> None:
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gtk, GLib, Gdk, Pango
 
-    PAD = 8
-    ACCENT_W = 4
-    CHARS_PER_LINE = 62
+    PAD = 10
+    ACCENT_W = 3
+    CHARS_PER_LINE = 82
 
     css = b"""
     .card {
-        background-color: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
+        background-color: #fbfdff;
+        border: 1px solid #dbe4f0;
+        border-radius: 14px;
     }
     .accent {
-        background-color: #d1d5db;
+        background-color: #2563eb;
     }
     textview, textview text,
     scrolledwindow, scrolledwindow viewport,
@@ -227,15 +252,16 @@ def show_popup(text: str) -> None:
         Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
 
-    # Estimate dynamic size (account for existing newlines + line wrapping)
-    line_height = 26
+    # Estimate dynamic size (account for existing newlines + line wrapping).
+    # Keep the card compact; the text view scrolls for unusually long summaries.
+    line_height = 17
     raw_lines = text.split("\n")
     num_lines = max(text.count("\n") + 1,
                     sum(max(1, len(l) // CHARS_PER_LINE) for l in raw_lines))
-    content_w = min(max(400, CHARS_PER_LINE * 7 + 28), 580)
-    content_h = min(num_lines * line_height + 40, 400)
+    content_w = min(max(400, CHARS_PER_LINE * 6 + 30), 600)
+    content_h = min(num_lines * line_height + 34, 320)
     total_w = content_w + ACCENT_W + 2
-    total_h = content_h + 24
+    total_h = content_h + 20
 
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
     win.set_default_size(total_w, total_h)
@@ -265,9 +291,9 @@ def show_popup(text: str) -> None:
 
     # --- Widget hierarchy ---
     # Gtk.Window (transparent)
-    #   └── Gtk.EventBox (.card)       ← white bg, border, radius
+    #   └── Gtk.EventBox (.card)       ← soft card background + rounded border
     #       └── Gtk.Box (horizontal)
-    #           ├── Gtk.EventBox (.accent)  ← 4px gray bar, full height
+    #           ├── Gtk.EventBox (.accent)  ← narrow blue accent strip
     #           └── Gtk.ScrolledWindow
     #               └── Gtk.TextView     ← transparent, margins, tags
 
@@ -288,10 +314,10 @@ def show_popup(text: str) -> None:
     text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
     text_view.set_editable(False)
     text_view.set_cursor_visible(False)
-    text_view.set_margin_start(12)
-    text_view.set_margin_end(16)
-    text_view.set_margin_top(12)
-    text_view.set_margin_bottom(14)
+    text_view.set_margin_start(16)
+    text_view.set_margin_end(18)
+    text_view.set_margin_top(14)
+    text_view.set_margin_bottom(16)
 
     _build_buffer(text_view.get_buffer(), text)
 

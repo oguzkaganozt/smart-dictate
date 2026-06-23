@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# install.sh — bootstrap the smart-dictate pipeline on Ubuntu 24.04+.
+# install.sh — bootstrap + install the smart-dictate pipeline on Ubuntu 24.04+.
+#
+# When run from a local checkout (config/voxtype.toml present) the install
+# logic runs directly.  When piped from curl or run standalone without the
+# supporting source files, this script downloads the latest (or pinned)
+# release tarball, verifies SHA256SUMS, extracts it, and re-execs itself
+# from the bundle — so a single entry point works everywhere.
 #
 # Idempotent: re-running skips steps that already succeeded.
 #
@@ -20,8 +26,96 @@
 
 set -Eeuo pipefail
 
-# ---------- paths ----------
+# ---------- paths + bootstrap ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
+
+# ---- bootstrap mode: download release if local source files are missing ----
+if [[ ! -f "$SCRIPT_DIR/config/voxtype.toml" ]]; then
+  REPO="${SMART_DICTATE_REPO:-oguzkaganozt/smart-dictate}"
+  VERSION="${SMART_DICTATE_VERSION:-latest}"
+  TMPDIR="$(mktemp -d)"
+  trap 'rm -rf "$TMPDIR"' EXIT
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "install.sh: python3 is required" >&2
+    exit 1
+  fi
+
+  echo "Downloading smart-dictate ${VERSION} from ${REPO}..."
+  python3 - "$REPO" "$VERSION" "$TMPDIR" <<'PY'
+import hashlib, json, os, subprocess, sys, urllib.request
+from pathlib import Path
+
+repo, version, tmp = sys.argv[1:4]
+tmpdir = Path(tmp)
+headers = {"User-Agent": "smart-dictate-installer"}
+token = os.environ.get("GITHUB_TOKEN")
+if not token:
+    try:
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=5.0)
+        if r.returncode == 0:
+            token = r.stdout.strip()
+    except Exception:
+        token = None
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+
+if version == "latest":
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+else:
+    tag = version if version.startswith("v") else f"v{version}"
+    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+
+req = urllib.request.Request(url, headers=headers)
+with urllib.request.urlopen(req, timeout=20) as response:
+    release = json.load(response)
+
+tar_asset = sums_asset = None
+for asset in release.get("assets", []):
+    name = asset.get("name", "")
+    if name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
+        tar_asset = asset
+    elif name == "SHA256SUMS":
+        sums_asset = asset
+
+if tar_asset is None or sums_asset is None:
+    raise SystemExit("release is missing smart-dictate tarball or SHA256SUMS")
+
+def download(asset):
+    dest = tmpdir / asset["name"]
+    req = urllib.request.Request(asset["browser_download_url"], headers=headers)
+    with urllib.request.urlopen(req, timeout=60) as response:
+        dest.write_bytes(response.read())
+    return dest
+
+tarball = download(tar_asset)
+sums = download(sums_asset)
+
+expected = None
+for line in sums.read_text(encoding="utf-8").splitlines():
+    parts = line.split()
+    if len(parts) == 2 and parts[1] == tarball.name:
+        expected = parts[0]
+        break
+if expected is None:
+    raise SystemExit(f"SHA256SUMS does not contain {tarball.name}")
+
+actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+if actual != expected:
+    raise SystemExit(f"checksum mismatch for {tarball.name}")
+
+tag = release["tag_name"]
+(tmpdir / "TAG").write_text(tag, encoding="utf-8")
+print(f"Downloaded {tarball.name} ({tag})")
+PY
+
+  TAG="$(tr -d '\n' < "$TMPDIR/TAG")"
+  tar -xzf "$TMPDIR/smart-dictate-$TAG.tar.gz" -C "$TMPDIR"
+  bash "$TMPDIR/smart-dictate-$TAG/install.sh" "$@"
+  exit $?
+fi
+
+# ---- local install paths ----
 CONFIG_SRC="$SCRIPT_DIR/config/voxtype.toml"
 SMART_DICTATE_CONFIG_SRC="$SCRIPT_DIR/config/smart-dictate.toml"
 SYSTEMD_DIR="$SCRIPT_DIR/config/systemd"
@@ -339,7 +433,6 @@ step_source_tree() {
     rm -rf "$SMART_DICTATE_SOURCE_DST"
     mkdir -p "$SMART_DICTATE_SOURCE_DST"
     install -m 0755 "$SCRIPT_DIR/install.sh" "$SMART_DICTATE_SOURCE_DST/install.sh"
-    install -m 0755 "$SCRIPT_DIR/bootstrap.sh" "$SMART_DICTATE_SOURCE_DST/bootstrap.sh"
     install -m 0644 "$SCRIPT_DIR/Makefile" "$SMART_DICTATE_SOURCE_DST/Makefile"
     install -m 0644 "$SCRIPT_DIR/README.md" "$SMART_DICTATE_SOURCE_DST/README.md"
     install -m 0644 "$SCRIPT_DIR/LICENSE" "$SMART_DICTATE_SOURCE_DST/LICENSE"
