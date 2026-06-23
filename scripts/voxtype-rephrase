@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,19 +27,30 @@ MODEL = groq.resolve_model(_cfg["groq"], _cfg["rephrase"], "REPHRASE")
 ENDPOINT = groq.resolve_endpoint(_cfg["groq"], _cfg["rephrase"], "REPHRASE")
 
 DEFAULT_PROMPT = (
-    "You are an experienced editor. Rewrite the text to be more fluent, "
-    "natural, and concise. Remove redundancy, filler, and unnecessary "
-    "words while preserving ALL key information, data, technical terms, "
-    "commands, file paths, and code names unchanged. The output should be "
-    "substantially shorter but still complete in meaning and context. "
+    "You are an experienced editor. Produce a noticeably improved rewrite, "
+    "not a light copy-edit. Restructure awkward sentences, merge related "
+    "ideas, remove filler, repetition, hedging, and unnecessary words, and "
+    "make the text sound natural and direct. Preserve ALL key information, "
+    "data, technical terms, commands, file paths, and code names unchanged. "
+    "The output should usually be shorter and clearer, but still complete in "
+    "meaning and context. Do not return a near-identical version unless the "
+    "input is already very short, already clear, or mostly technical syntax. "
     "PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output in "
     "Turkish; if English, output in English. "
     "Output only the rewritten text, no explanations."
 )
 SYSTEM_PROMPT = os.environ.get("REPHRASE_STYLE") or _cfg["rephrase"].get("system_prompt", DEFAULT_PROMPT)
 
-DEFAULT_USER_PROMPT = "Rewrite this text more clearly:\n\n{text}"
+DEFAULT_USER_PROMPT = "Rewrite this text substantially more clearly and concisely:\n\n{text}"
 USER_PROMPT = _cfg["rephrase"].get("user_prompt", DEFAULT_USER_PROMPT)
+
+
+def _retry_after_seconds(e: urllib.error.HTTPError) -> float:
+    value = e.headers.get("Retry-After", "").strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return 0.0
 
 
 def get_selected_text() -> str:
@@ -62,11 +74,22 @@ def rephrase(text: str) -> str:
     payload = groq.build_payload(
         MODEL, SYSTEM_PROMPT, user,
         temperature=0.3,
-        max_completion_tokens=groq.token_budget(user, SYSTEM_PROMPT),
+        max_completion_tokens=groq.token_budget(user, SYSTEM_PROMPT, ceiling=1536),
     )
-    output = groq.call_groq(
-        ENDPOINT, api_key, payload, timeout=5.0, user_agent="voxtype-rephrase/1.0",
-    )
+    for attempt in range(2):
+        try:
+            output = groq.call_groq(
+                ENDPOINT, api_key, payload, timeout=5.0, user_agent="voxtype-rephrase/1.0",
+            )
+            break
+        except urllib.error.HTTPError as e:
+            retry_after = _retry_after_seconds(e)
+            if e.code == 429 and attempt == 0 and retry_after <= 6.0:
+                wait = retry_after or 1.0
+                log(f"rate limited; retrying after {wait:.1f}s")
+                time.sleep(wait)
+                continue
+            raise
     log(f"rephrase output: {len(output)} chars")
     return output
 
@@ -123,24 +146,29 @@ def _is_terminal(wid: str) -> bool:
 
 
 def paste_text(text: str) -> None:
-    wid = subprocess.run(
-        ["xdotool", "getactivewindow"],
-        capture_output=True, text=True, timeout=2.0,
-    ).stdout.strip()
     subprocess.run(
         ["xclip", "-selection", "clipboard"],
         input=text.encode(), timeout=2.0,
     )
-    time.sleep(0.1)
-    if wid:
-        subprocess.run(
-            ["xdotool", "windowactivate", "--sync", wid],
-            capture_output=True, timeout=5.0,
-        )
-        time.sleep(0.05)
+
+    paste_helper = shutil.which("voxtype-paste-active")
+    if not paste_helper:
+        local_helper = Path(__file__).with_name("voxtype-paste-active")
+        if local_helper.exists():
+            paste_helper = str(local_helper)
+
+    if paste_helper:
+        subprocess.run([paste_helper], timeout=5.0)
+        log(f"pasted {len(text)} chars via voxtype-paste-active")
+        return
+
+    wid = subprocess.run(
+        ["xdotool", "getactivewindow"],
+        capture_output=True, text=True, timeout=2.0,
+    ).stdout.strip()
     key = "ctrl+shift+v" if _is_terminal(wid) else "ctrl+v"
-    subprocess.run(["xdotool", "key", key], timeout=5.0)
-    log(f"pasted {len(text)} chars via {key}")
+    subprocess.run(["xdotool", "key", "--clearmodifiers", key], timeout=5.0)
+    log(f"pasted {len(text)} chars via fallback {key}")
 
 
 
@@ -164,6 +192,12 @@ def main() -> int:
         log(f"HTTP error: {e.code} {e.reason}")
         if e.code == 413:
             _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter)")
+        elif e.code == 429:
+            retry_after = _retry_after_seconds(e)
+            if retry_after:
+                _notify_err(f"Groq limit dolu, {retry_after:.0f} sn sonra tekrar dene")
+            else:
+                _notify_err("Groq limit dolu, birazdan tekrar dene")
         else:
             _notify_err(f"HTTP {e.code}")
         paste_text(text)

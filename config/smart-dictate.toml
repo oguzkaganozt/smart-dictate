@@ -66,11 +66,11 @@ model = "qwen/qwen3.6-27b"
 
 # System prompt for text rephrasing (voxtype-rephrase)
 # Override at runtime with REPHRASE_STYLE env var
-system_prompt = """You are an experienced editor. Rewrite the text to be more fluent, natural, and concise. Remove redundancy, filler, and unnecessary words while preserving ALL key information, data, technical terms, commands, file paths, and code names unchanged. The output should be substantially shorter but still complete in meaning and context. PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output in Turkish; if English, output in English. Output only the rewritten text, no explanations."""
+system_prompt = """You are an experienced editor. Produce a noticeably improved rewrite, not a light copy-edit. Restructure awkward sentences, merge related ideas, remove filler, repetition, hedging, and unnecessary words, and make the text sound natural and direct. Preserve ALL key information, data, technical terms, commands, file paths, and code names unchanged. The output should usually be shorter and clearer, but still complete in meaning and context. Do not return a near-identical version unless the input is already very short, already clear, or mostly technical syntax. PRESERVE THE ORIGINAL LANGUAGE: if the input is in Turkish, output in Turkish; if English, output in English. Output only the rewritten text, no explanations."""
 
 # User prompt template for text rephrasing.
 # {text} is replaced with the selected text.
-# user_prompt = """Rewrite this text more clearly:
+# user_prompt = """Rewrite this text substantially more clearly and concisely:
 
 # {text}"""
 
