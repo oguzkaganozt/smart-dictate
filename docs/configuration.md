@@ -23,7 +23,7 @@ Find your key name with `sudo evtest` (look in `/dev/input/event*`).
 [audio]
 device = "default"       # pactl list sources short for a specific name
 sample_rate = 16000      # Whisper's native rate; don't change
-max_duration_secs = 45   # safety cap; daemon aborts past this
+max_duration_secs = 180  # safety cap; daemon aborts past this
 # pause_media = false    # auto-pause Spotify via MPRIS
 ```
 
@@ -139,9 +139,7 @@ Use with: `voxtype record start --profile code`.
 enabled = true
 threshold = 0.5           # 0.0 = sensitive, 1.0 = aggressive
 min_speech_duration_ms = 250
-min_silence_duration_ms = 500
-max_speech_duration_s = 30
-speech_pad_ms = 30
+
 ```
 
 Disable VAD only if you're recording in noisy environments where

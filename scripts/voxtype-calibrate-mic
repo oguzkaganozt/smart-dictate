@@ -22,7 +22,7 @@ MIN_SPEECH_GAIN = 18
 MIN_SPEECH_PEAK_DB = -35.0
 TARGET_PEAK_DB = -6.0
 MAX_PEAK_DB = -3.0
-GAIN_DB_PER_STEP = 0.75
+GAIN_DB_PER_STEP = 0.75  # fallback; actual value measured from sweep data
 
 
 # ---------------------------------------------------------------------------
@@ -41,30 +41,65 @@ def _detect_card() -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _set_gain(card: int, value: int) -> None:
-    value = max(0, min(63, value))
-    r = subprocess.run(
-        ["amixer", "-c", str(card), "sset", "Capture", str(value)],
-        capture_output=True, text=True, timeout=3.0,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"amixer failed: {(r.stderr or r.stdout).strip()}")
+_CAPTURE_CONTROLS = ["Capture", "Mic Capture", "Mic", "ADC", "Capture Volume"]
 
 
-def _current_gain(card: int) -> int:
-    r = subprocess.run(
-        ["amixer", "-c", str(card), "sget", "Capture"],
-        capture_output=True, text=True, timeout=3.0,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"amixer failed: {(r.stderr or r.stdout).strip()}")
+_MAX_GAIN = 63  # fallback; detected from hardware
 
-    for line in r.stdout.splitlines():
-        m = re.search(r": Capture\s+(\d+)\s+\[", line)
+
+def _detect_gain_range(card: int) -> int:
+    for ctl in _CAPTURE_CONTROLS:
+        r = subprocess.run(
+            ["amixer", "-c", str(card), "sget", ctl],
+            capture_output=True, text=True, timeout=3.0,
+        )
+        if r.returncode != 0:
+            continue
+        m = re.search(rf"Limits: {re.escape(ctl)} (\d+) - (\d+)", r.stdout)
         if m:
-            return int(m.group(1))
+            return int(m.group(2))
+    return _MAX_GAIN
 
-    raise RuntimeError("could not parse current Capture gain from amixer output")
+
+def _pct_to_raw(pct: float, gain_max: int) -> int:
+    return round(pct / 100 * gain_max)
+
+
+def _set_gain(card: int, value: int, gain_max: int | None = None) -> None:
+    if gain_max is None:
+        gain_max = _MAX_GAIN
+    pct = value / _MAX_GAIN * 100
+    raw = _pct_to_raw(pct, gain_max)
+    for ctl in _CAPTURE_CONTROLS:
+        r = subprocess.run(
+            ["amixer", "-c", str(card), "sset", ctl, str(raw)],
+            capture_output=True, text=True, timeout=3.0,
+        )
+        if r.returncode == 0:
+            return
+    raise RuntimeError(
+        f"amixer failed: none of {_CAPTURE_CONTROLS} work on card {card}"
+    )
+
+
+def _current_gain(card: int, gain_max: int | None = None) -> int:
+    if gain_max is None:
+        gain_max = _MAX_GAIN
+    for ctl in _CAPTURE_CONTROLS:
+        r = subprocess.run(
+            ["amixer", "-c", str(card), "sget", ctl],
+            capture_output=True, text=True, timeout=3.0,
+        )
+        if r.returncode != 0:
+            continue
+        for line in r.stdout.splitlines():
+            m = re.search(rf": {re.escape(ctl)}\s+(\d+)\s+\[", line)
+            if m:
+                raw = int(m.group(1))
+                return round(raw / gain_max * _MAX_GAIN)
+    raise RuntimeError(
+        f"could not read gain: none of {_CAPTURE_CONTROLS} work on card {card}"
+    )
 
 
 def _record(path: str, secs: int = DURATION) -> None:
@@ -87,20 +122,24 @@ def _stats_output(path: str) -> str:
     return output
 
 
+def _parse_stats(path: str) -> tuple[float | None, bool]:
+    stats = _stats_output(path)
+    pk = re.search(r"Pk lev dB\s+(-?\d+\.?\d*)", stats)
+    peak_db = float(pk.group(1)) if pk else None
+    min_m = re.search(r"Min level\s+(-?\d+\.?\d*)", stats)
+    max_m = re.search(r"Max level\s+(-?\d+\.?\d*)", stats)
+    clipped = False
+    if min_m and max_m:
+        clipped = float(min_m.group(1)) <= -0.999 or float(max_m.group(1)) >= 0.999
+    return peak_db, clipped
+
+
 def _peak_db(path: str) -> float | None:
-    m = re.search(r"Pk lev dB\s+(-?\d+\.?\d*)", _stats_output(path))
-    return float(m.group(1)) if m else None
+    return _parse_stats(path)[0]
 
 
 def _clipped(path: str) -> bool:
-    stats = _stats_output(path)
-    min_match = re.search(r"Min level\s+(-?\d+\.?\d*)", stats)
-    max_match = re.search(r"Max level\s+(-?\d+\.?\d*)", stats)
-    if not min_match or not max_match:
-        return False
-    min_level = float(min_match.group(1))
-    max_level = float(max_match.group(1))
-    return min_level <= -0.999 or max_level >= 0.999
+    return _parse_stats(path)[1]
 
 
 def _fmt_peak(pk: float | None) -> str:
@@ -129,12 +168,31 @@ def _progress(current: int, total: int) -> str:
     return f"[{filled}] {current}/{total}"
 
 
-def _gain_for_target_peak(gain: int, peak_db: float) -> int:
-    delta = math.floor((TARGET_PEAK_DB - peak_db) / GAIN_DB_PER_STEP)
-    return max(0, min(63, gain + delta))
+def _gain_for_target_peak(gain: int, peak_db: float, db_per_step: float = GAIN_DB_PER_STEP) -> int:
+    delta = math.floor((TARGET_PEAK_DB - peak_db) / db_per_step)
+    return max(0, min(_MAX_GAIN, gain + delta))
 
 
-def _choose_gain(results: list[dict[str, float | int | bool]]) -> int | None:
+def _measure_gain_step(results: list[dict]) -> float | None:
+    pairs = [(r["gain"], r["peak"]) for r in results
+             if r["peak"] is not None and r["gain"] >= MIN_SPEECH_GAIN]
+    pairs.sort()
+    deltas = []
+    for i in range(1, len(pairs)):
+        g_prev, p_prev = pairs[i - 1]
+        g_cur, p_cur = pairs[i]
+        g_step = g_cur - g_prev
+        p_diff = p_cur - p_prev
+        if g_step > 0 and abs(p_diff) > 1.0:
+            deltas.append(p_diff / g_step)
+    if len(deltas) >= 2:
+        return sum(deltas) / len(deltas)
+    if deltas:
+        return deltas[0]
+    return None
+
+
+def _choose_gain(results: list[dict], db_per_step: float = GAIN_DB_PER_STEP) -> int | None:
     speech = [
         r for r in results
         if r["gain"] >= MIN_SPEECH_GAIN
@@ -147,16 +205,16 @@ def _choose_gain(results: list[dict[str, float | int | bool]]) -> int | None:
     clean = [r for r in speech if not r["clipped"]]
     if clean:
         hottest = max(clean, key=lambda r: r["peak"])
-        candidate = _gain_for_target_peak(int(hottest["gain"]), float(hottest["peak"]))
+        candidate = _gain_for_target_peak(int(hottest["gain"]), float(hottest["peak"]), db_per_step)
         clipped = sorted((r for r in speech if r["clipped"]), key=lambda r: r["gain"])
         if clipped:
             first_clip_gain = int(clipped[0]["gain"])
-            candidate = min(candidate, _gain_for_target_peak(first_clip_gain, 0.0))
+            candidate = min(candidate, _gain_for_target_peak(first_clip_gain, 0.0, db_per_step))
         return candidate
 
     clipped = sorted((r for r in speech if r["clipped"]), key=lambda r: r["gain"])
     if clipped:
-        return _gain_for_target_peak(int(clipped[0]["gain"]), 0.0)
+        return _gain_for_target_peak(int(clipped[0]["gain"]), 0.0, db_per_step)
 
     return None
 
@@ -165,7 +223,7 @@ def _choose_gain(results: list[dict[str, float | int | bool]]) -> int | None:
 # main
 # ---------------------------------------------------------------------------
 
-def _run_calibration(card: int, original_gain: int) -> int:
+def _run_calibration(card: int, original_gain: int, gain_max: int) -> int:
     committed = False
 
     try:
@@ -177,7 +235,8 @@ def _run_calibration(card: int, original_gain: int) -> int:
         print("║  Then I target safe speech headroom, not the ║")
         print("║  loudest possible mixer setting.             ║")
         print("╚══════════════════════════════════════════════╝")
-        print(f"  Current: {original_gain}/63 ({round(original_gain/63*100)}%)")
+        print(f"  Current: {original_gain}/{_MAX_GAIN} ({round(original_gain/_MAX_GAIN*100)}%)")
+        print(f"  Hardware gain range: 0-{gain_max} (scaled to 0-{_MAX_GAIN})")
         print()
 
         # ----- step 1: ambient noise floor -----
@@ -187,7 +246,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
                 f"  Current gain is hot; measuring noise at safe gain "
                 f"{noise_gain}/63 first."
             )
-            _set_gain(card, noise_gain)
+            _set_gain(card, noise_gain, gain_max)
             print()
 
         _wait("Press ENTER to measure noise (stay quiet for 3s)")
@@ -198,8 +257,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
         tmp.close()
         try:
             _record(noise_path, 3)
-            noise_db = _peak_db(noise_path)
-            noise_clip = _clipped(noise_path)
+            noise_db, noise_clip = _parse_stats(noise_path)
         finally:
             if os.path.exists(noise_path):
                 os.unlink(noise_path)
@@ -222,7 +280,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
         print()
 
         for i, v in enumerate(levels):
-            _set_gain(card, v)
+            _set_gain(card, v, gain_max)
             prompt = _progress(i + 1, total)
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             path = tmp.name
@@ -244,8 +302,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
                     )
                     _record(path, DURATION)
 
-                pk = _peak_db(path)
-                clip = _clipped(path)
+                pk, clip = _parse_stats(path)
                 results.append({"gain": v, "peak": pk, "clipped": clip})
                 status = "CLIP ⚠" if clip else _fmt_peak(pk)
                 print(status)
@@ -265,7 +322,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
             hi = min(r["gain"] for r in clipped)
             while hi - lo > 1:
                 mid = (lo + hi) // 2
-                _set_gain(card, mid)
+                _set_gain(card, mid, gain_max)
                 print(
                     f"  Fine-tune  Gain {mid:>2}/63 → SPEAK LOUDLY NOW:",
                     end=" ", flush=True,
@@ -275,8 +332,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
                 tmp.close()
                 try:
                     _record(path, DURATION)
-                    pk = _peak_db(path)
-                    clip = _clipped(path)
+                    pk, clip = _parse_stats(path)
                     results.append({"gain": mid, "peak": pk, "clipped": clip})
                     status = "CLIP ⚠" if clip else _fmt_peak(pk)
                     print(status)
@@ -288,14 +344,19 @@ def _run_calibration(card: int, original_gain: int) -> int:
                     hi = mid
                 else:
                     lo = mid
-        best = _choose_gain(results)
+        db_per_step = _measure_gain_step(results) or GAIN_DB_PER_STEP
+        if db_per_step != GAIN_DB_PER_STEP:
+            print(f"  Measured {db_per_step:.2f} dB/step (fallback: {GAIN_DB_PER_STEP})")
+        print()
+
+        best = _choose_gain(results, db_per_step)
         if best is None:
             print("  Could not capture a usable speech level.")
             return 1
 
         # ----- verify -----
         for attempt in range(4):
-            _set_gain(card, best)
+            _set_gain(card, best, gain_max)
             action = "Verify" if attempt == 0 else "Back off"
             print(
                 f"  {action} at  Gain {best:>2}/63 → SPEAK LOUDLY NOW:",
@@ -306,8 +367,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
             tmp.close()
             try:
                 _record(path, DURATION)
-                final_pk = _peak_db(path)
-                final_clip = _clipped(path)
+                final_pk, final_clip = _parse_stats(path)
                 status = "CLIP ⚠" if final_clip else _fmt_peak(final_pk)
                 print(status)
             finally:
@@ -326,7 +386,7 @@ def _run_calibration(card: int, original_gain: int) -> int:
                 break
 
             hot_peak = 0.0 if final_clip else final_pk
-            next_best = _gain_for_target_peak(best, hot_peak)
+            next_best = _gain_for_target_peak(best, hot_peak, db_per_step)
             if next_best >= best:
                 next_best = best - 1
             best = max(0, next_best)
@@ -334,15 +394,33 @@ def _run_calibration(card: int, original_gain: int) -> int:
             print("  Could not find a gain with enough headroom.")
             return 1
 
-        _set_gain(card, best)
+        _set_gain(card, best, gain_max)
+        committed = True
 
-        if final_clip:
-            print("  Could not find a non-clipping gain. Restoring previous setting.")
-            return 1
+        # ----- noise floor at final gain (accurate SNR) -----
+        final_noise_db = None
+        try:
+            _wait("Press ENTER to measure noise (stay quiet for 3s)")
+            print("  Noise at final gain...", end=" ", flush=True)
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            noise_path = tmp.name
+            tmp.close()
+            try:
+                _record(noise_path, 3)
+                final_noise_db = _peak_db(noise_path)
+            finally:
+                if os.path.exists(noise_path):
+                    os.unlink(noise_path)
+            print(_fmt_peak(final_noise_db))
+            print()
+        except KeyboardInterrupt:
+            print()
+            print("  Skipping noise measurement.")
+            print()
 
         # ----- summary -----
-        final_gain = _current_gain(card)
-        pct = round(final_gain / 63 * 100)
+        final_gain = _current_gain(card, gain_max)
+        pct = round(final_gain / _MAX_GAIN * 100)
 
         print()
         print("╔══════════════════════════════════════════════╗")
@@ -352,8 +430,8 @@ def _run_calibration(card: int, original_gain: int) -> int:
         print(f"║  Peak level    {_fmt_peak(final_pk):>10}              ║")
         print(f"║  Clipping      {'YES ⚠' if final_clip else 'No ✓':>10}              ║")
 
-        if noise_db is not None and final_pk is not None:
-            snr = final_pk - noise_db
+        if final_noise_db is not None and final_pk is not None:
+            snr = final_pk - final_noise_db
             print(f"║  SNR           {snr:>3.0f} dB                       ║")
             print("║                                              ║")
             if snr > 25:
@@ -370,7 +448,6 @@ def _run_calibration(card: int, original_gain: int) -> int:
         print("  Settings persist across reboots automatically.")
         print()
 
-        committed = True
         try:
             _wait("Press ENTER to close")
         except KeyboardInterrupt:
@@ -378,8 +455,8 @@ def _run_calibration(card: int, original_gain: int) -> int:
         return 0
     finally:
         if not committed:
-            _set_gain(card, original_gain)
-            print(f"  Restored previous gain: {original_gain}/63")
+            _set_gain(card, original_gain, gain_max)
+            print(f"  Restored previous gain: {original_gain}/{_MAX_GAIN}")
 
 
 def main() -> int:
@@ -404,13 +481,14 @@ def main() -> int:
         print("ERROR: no capture-capable ALSA card found.")
         return 1
 
-    original_gain = _current_gain(card)
+    gain_max = _detect_gain_range(card)
+    original_gain = _current_gain(card, gain_max)
     try:
-        return _run_calibration(card, original_gain)
+        return _run_calibration(card, original_gain, gain_max)
     except KeyboardInterrupt:
         print()
-        _set_gain(card, original_gain)
-        print(f"  Calibration cancelled; restored gain {original_gain}/63.")
+        _set_gain(card, original_gain, gain_max)
+        print(f"  Calibration cancelled; restored gain {original_gain}/{_MAX_GAIN}.")
         return 130
 
 

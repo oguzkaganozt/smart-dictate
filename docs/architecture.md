@@ -48,7 +48,7 @@ recording, then release (or press again) to transcribe.
 ### 2. Audio capture
 - `pipewire-alsa` provides the ALSA compatibility shim.
 - VoxType opens the default source at 16 kHz mono (Whisper's native
-  format). `max_duration_secs = 45` is a safety cap.
+  format). `max_duration_secs = 180` is a safety cap.
 - Voice Activity Detection (`[vad]`, Silero ONNX) drops recordings
   that contain no speech — this prevents Whisper hallucinations on
   silent clips.

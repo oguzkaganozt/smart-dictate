@@ -13,7 +13,7 @@ mode = "toggle"
 [audio]
 device = "default"
 sample_rate = 16000
-max_duration_secs = 45
+max_duration_secs = 180
 
 [whisper]
 model = "large-v3-turbo"
@@ -49,6 +49,4 @@ enabled = false
 enabled = true
 threshold = 0.5
 min_speech_duration_ms = 250
-min_silence_duration_ms = 900
-max_speech_duration_s = 30
-speech_pad_ms = 200
+
