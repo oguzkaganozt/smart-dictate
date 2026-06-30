@@ -271,7 +271,7 @@ preflight() {
 # mesa-vulkan-drivers is the Mesa ICD loader (Intel/AMD); for NVIDIA
 # systems the nvidia-driver package provides the Vulkan ICD instead.
 REQUIRED_PACKAGES=(voxtype xdotool xclip ydotool wtype wl-clipboard
-                   libnotify-bin pipewire-alsa playerctl libvulkan1
+                   libnotify-bin pipewire-alsa sox playerctl libvulkan1
                    mesa-vulkan-drivers
                    gir1.2-ayatanaappindicator3-0.1 xbindkeys)
 
@@ -762,6 +762,9 @@ case "$MODE" in
     echo
     log "Installation finished. Running verify:"
     verify
+
+    warn "\`~/.local/bin\` may not be on your PATH until you open a new terminal."
+    warn "Run:  source ~/.profile   (or log out and back in)"
     ;;
   dry-run)
     echo "[DRY-RUN] no changes will be made"
