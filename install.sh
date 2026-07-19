@@ -535,7 +535,7 @@ step_api_key() {
 
 step_model() {
   if [[ "$SKIP_MODEL" -eq 1 ]]; then
-    log "Skipping model download (--no-model)"
+    log "Skipping model downloads (--no-model)"
     return 0
   fi
 
@@ -543,17 +543,24 @@ step_model() {
   local model_file="$model_dir/ggml-large-v3-turbo.bin"
   if [[ -f "$model_file" ]]; then
     ok "Whisper model already present: $model_file ($(du -h "$model_file" | cut -f1))"
-    return 0
-  fi
-
-  if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
+  elif [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
     warn "Whisper model not present (would download ~1.6 GB)"
-    return 0
+  else
+    log "Downloading whisper large-v3-turbo (~1.6 GB) via 'voxtype setup model'"
+    run mkdir -p "$model_dir"
+    run voxtype setup model --quiet --model large-v3-turbo
   fi
 
-  log "Downloading whisper large-v3-turbo (~1.6 GB) via 'voxtype setup model'"
-  run mkdir -p "$model_dir"
-  run voxtype setup model --quiet --model large-v3-turbo
+  local vad_file="$model_dir/ggml-silero-vad.bin"
+  if [[ -f "$vad_file" ]]; then
+    ok "VAD model already present: $vad_file ($(du -h "$vad_file" | cut -f1))"
+  elif [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
+    warn "Silero VAD model not present (would download via 'voxtype setup vad')"
+  else
+    log "Downloading Silero VAD model via 'voxtype setup vad'"
+    run mkdir -p "$model_dir"
+    run voxtype setup vad
+  fi
 }
 
 step_service() {
@@ -700,6 +707,12 @@ verify() {
     ok "model:    $model ($(du -h "$model" | cut -f1))"
   else
     warn "model:    $model NOT YET DOWNLOADED"
+  fi
+  local vad_model="$HOME/.local/share/voxtype/models/ggml-silero-vad.bin"
+  if [[ -f "$vad_model" ]]; then
+    ok "vad:      $vad_model ($(du -h "$vad_model" | cut -f1))"
+  else
+    warn "vad:      $vad_model NOT YET DOWNLOADED"
   fi
 
   if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
