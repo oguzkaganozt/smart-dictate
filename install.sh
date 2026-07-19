@@ -560,19 +560,21 @@ step_service() {
   if [[ "$MODE" == "check" || "$MODE" == "dry-run" ]]; then
     extra_ydotoold=""
     command -v ydotoold >/dev/null 2>&1 && extra_ydotoold=" + ydotoold"
-    log "Would: systemctl --user daemon-reload && enable --now voxtype + voxtype-tray + xbindkeys${extra_ydotoold}"
+    log "Would: systemctl --user daemon-reload && enable + restart voxtype + voxtype-tray + xbindkeys${extra_ydotoold}"
     return 0
   fi
 
   log "Reloading systemd user manager + enabling services"
   systemctl --user daemon-reload
-  systemctl --user enable --now voxtype.service voxtype-tray.service xbindkeys.service
+  systemctl --user enable voxtype.service voxtype-tray.service xbindkeys.service
+  systemctl --user restart voxtype.service voxtype-tray.service xbindkeys.service
   # ydotoold powers Wayland keystroke injection, but it is NOT packaged on
   # Ubuntu. Only enable it when the daemon is actually installed; otherwise
   # voxtype-paste-active degrades gracefully (wtype, then a "press Ctrl+V"
   # notification). On X11 this is irrelevant — xdotool handles the paste.
   if command -v ydotoold >/dev/null 2>&1; then
-    if ! systemctl --user enable --now ydotoold.service; then
+    if ! systemctl --user enable ydotoold.service \
+      || ! systemctl --user restart ydotoold.service; then
       warn "ydotoold.service failed to start (logout/login may be needed for /dev/uinput);"
       warn "Wayland auto-paste will activate once it runs."
     fi
