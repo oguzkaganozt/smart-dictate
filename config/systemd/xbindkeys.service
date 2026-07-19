@@ -1,5 +1,5 @@
 [Unit]
-Description=xbindkeys hotkey daemon for smart-dictate
+Description=xbindkeys hotkey daemon for Relay
 After=graphical-session.target
 PartOf=graphical-session.target
 

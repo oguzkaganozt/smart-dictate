@@ -1,9 +1,9 @@
-# smart-dictate: rephrase selected text
+# Relay: rephrase selected text
 # NOTE: ${REPHRASE_BIND} and ${SUMMARIZE_BIND} are template variables
 # resolved by install.sh.  $HOME is expanded by xbindkeys at runtime.
 "$HOME/.local/bin/voxtype-rephrase"
     ${REPHRASE_BIND}
 
-# smart-dictate: summarize selected text
+# Relay: summarize selected text
 "$HOME/.local/bin/voxtype-summarize"
     ${SUMMARIZE_BIND}

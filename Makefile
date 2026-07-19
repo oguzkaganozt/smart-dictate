@@ -35,7 +35,8 @@ lint:              ## bash -n + py_compile + sh -n sweep
 	@python3 -m py_compile scripts/voxtype-summarize && echo "voxtype-summarize: py_compile ok"
 	@python3 -m py_compile scripts/voxtype-tray && echo "voxtype-tray: py_compile ok"
 	@python3 -m py_compile scripts/voxtype-calibrate-mic && echo "voxtype-calibrate-mic: py_compile ok"
-	@python3 -m py_compile scripts/smart-dictate && echo "smart-dictate: py_compile ok"
+	@python3 -m py_compile scripts/relay && echo "relay: py_compile ok"
+	@sh -n scripts/smart-dictate && echo "smart-dictate compatibility command: sh -n ok"
 	@sh -n scripts/voxtype-paste-active && echo "voxtype-paste-active: sh -n ok"
 
 # Stdlib unittest suite (no pip deps). Covers the pure dictation logic.

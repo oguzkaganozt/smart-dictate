@@ -1,4 +1,4 @@
-"""Shared Groq helpers for smart-dictate scripts (stdlib only, Python 3.11+).
+"""Shared Groq helpers for Relay scripts (stdlib only, Python 3.11+).
 
 Centralizes config loading, API-key resolution, model/endpoint precedence,
 the chat-completions HTTP call, reasoning_effort selection, and the Groq
@@ -12,7 +12,9 @@ import os
 import urllib.request
 from pathlib import Path
 
-CONFIG_PATH = Path.home() / ".config" / "smart-dictate" / "config.toml"
+XDG_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+CONFIG_PATH = XDG_CONFIG_HOME / "relay" / "config.toml"
+LEGACY_CONFIG_PATH = XDG_CONFIG_HOME / "smart-dictate" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
 DEFAULT_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -25,10 +27,11 @@ def load_config(*sections: str) -> dict:
     an empty dict for that section (never raises).
     """
     cfg = {s: {} for s in sections}
-    if CONFIG_PATH.exists():
+    config_path = CONFIG_PATH if CONFIG_PATH.exists() else LEGACY_CONFIG_PATH
+    if config_path.exists():
         try:
             import tomllib
-            with open(CONFIG_PATH, "rb") as f:
+            with open(config_path, "rb") as f:
                 data = tomllib.load(f)
             for s in sections:
                 val = data.get(s)

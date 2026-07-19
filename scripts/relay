@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Relay command-line entry point."""
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = "oguzkaganozt/relay"
+XDG_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+XDG_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+CONFIG_DIR = XDG_CONFIG_HOME / "relay"
+DATA_DIR = XDG_DATA_HOME / "relay"
+LEGACY_CONFIG_DIR = XDG_CONFIG_HOME / "smart-dictate"
+LEGACY_DATA_DIR = XDG_DATA_HOME / "smart-dictate"
+VERSION_FILE = CONFIG_DIR / "version"
+SOURCE_DIR_FILE = CONFIG_DIR / "source-dir"
+DEFAULT_SOURCE_DIR = DATA_DIR / "source"
+
+
+def _run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, check=check)
+
+
+def _source_dir() -> Path:
+    for source_file in (SOURCE_DIR_FILE, LEGACY_CONFIG_DIR / "source-dir"):
+        if source_file.exists():
+            path = Path(source_file.read_text(encoding="utf-8").strip()).expanduser()
+            if path.exists():
+                return path
+    legacy_source = LEGACY_DATA_DIR / "source"
+    if legacy_source.exists():
+        return legacy_source
+    return DEFAULT_SOURCE_DIR
+
+
+def _install_sh() -> Path:
+    path = _source_dir() / "install.sh"
+    if not path.exists():
+        raise SystemExit(
+            "Relay source installer is missing. "
+            "Run the bootstrap installer again or use 'relay upgrade --force'."
+        )
+    return path
+
+
+def _installed_version() -> str:
+    if VERSION_FILE.exists():
+        return VERSION_FILE.read_text(encoding="utf-8").strip() or "unknown"
+    return "unknown"
+
+
+def _github_headers() -> dict[str, str]:
+    headers = {"User-Agent": "relay"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token and shutil.which("gh"):
+        r = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+        if r.returncode == 0:
+            token = r.stdout.strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _request_json(url: str) -> dict | list:
+    request = urllib.request.Request(url, headers=_github_headers())
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)
+
+
+def _latest_release() -> dict:
+    try:
+        release = _request_json(f"https://api.github.com/repos/{REPO}/releases/latest")
+        assert isinstance(release, dict)
+        return release
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        releases = _request_json(f"https://api.github.com/repos/{REPO}/releases")
+        if not isinstance(releases, list) or not releases:
+            raise
+        return releases[0]
+
+
+def _find_assets(release: dict) -> tuple[dict, dict]:
+    relay_tarball = None
+    legacy_tarball = None
+    sums = None
+    for asset in release.get("assets", []):
+        name = asset.get("name", "")
+        if name.startswith("relay-") and name.endswith(".tar.gz"):
+            relay_tarball = asset
+        elif name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
+            legacy_tarball = asset
+        elif name == "SHA256SUMS":
+            sums = asset
+    tarball = relay_tarball or legacy_tarball
+    if tarball is None or sums is None:
+        raise SystemExit("latest release is missing Relay tarball or SHA256SUMS")
+    return tarball, sums
+
+
+def _download(asset: dict, directory: Path) -> Path:
+    dest = directory / asset["name"]
+    request = urllib.request.Request(asset["browser_download_url"], headers=_github_headers())
+    with urllib.request.urlopen(request, timeout=120) as response:
+        dest.write_bytes(response.read())
+    return dest
+
+
+def _verify_sha256(tarball: Path, sums: Path) -> None:
+    expected = None
+    for line in sums.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == tarball.name:
+            expected = parts[0]
+            break
+    if expected is None:
+        raise SystemExit(f"SHA256SUMS does not contain {tarball.name}")
+    actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(f"checksum mismatch for {tarball.name}")
+
+
+def _restart_services() -> None:
+    _run(["systemctl", "--user", "daemon-reload"])
+    _run([
+        "systemctl", "--user", "restart",
+        "voxtype.service", "voxtype-tray.service", "xbindkeys.service",
+    ])
+
+
+def cmd_version(_args: argparse.Namespace) -> int:
+    print(_installed_version())
+    return 0
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    _run(["systemctl", "--user", "--no-pager", "--full", "status", "voxtype.service"])
+    print("---")
+    _run(["journalctl", "--user", "-u", "voxtype.service", "-n", "30", "--no-pager"])
+    return 0
+
+
+def cmd_check(_args: argparse.Namespace) -> int:
+    return _run(["bash", str(_install_sh()), "--check"]).returncode
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    cmd = ["bash", str(_install_sh())]
+    if args.yes:
+        cmd.append("--yes")
+    return _run(cmd).returncode
+
+
+def cmd_uninstall(_args: argparse.Namespace) -> int:
+    return _run(["bash", str(_install_sh()), "--uninstall"]).returncode
+
+
+def cmd_calibrate(_args: argparse.Namespace) -> int:
+    return _run(["voxtype-calibrate-mic"]).returncode
+
+
+def cmd_restart(_args: argparse.Namespace) -> int:
+    _restart_services()
+    return 0
+
+
+def cmd_check_updates(args: argparse.Namespace) -> int:
+    release = _latest_release()
+    latest = release["tag_name"]
+    installed = _installed_version()
+    if installed == latest:
+        if not args.quiet:
+            print(f"Relay is up to date ({installed})")
+        return 0
+    if not args.quiet:
+        print(f"Update available: {installed} -> {latest}")
+    else:
+        print(latest)
+    return 10
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    release = _latest_release()
+    latest = release["tag_name"]
+    installed = _installed_version()
+    if installed == latest and not args.force:
+        print(f"Relay is already up to date ({installed})")
+        return 0
+
+    tar_asset, sums_asset = _find_assets(release)
+    with tempfile.TemporaryDirectory(prefix="relay-upgrade-") as tmp:
+        tmpdir = Path(tmp)
+        print(f"Downloading Relay {latest}...")
+        tarball = _download(tar_asset, tmpdir)
+        sums = _download(sums_asset, tmpdir)
+        _verify_sha256(tarball, sums)
+
+        with tarfile.open(tarball, "r:gz") as archive:
+            archive.extractall(tmpdir)
+
+        install_dir = tmpdir / tarball.name.removesuffix(".tar.gz")
+        install_sh = install_dir / "install.sh"
+        if not install_sh.exists():
+            raise SystemExit(f"release bundle is missing {install_sh}")
+
+        cmd = ["bash", str(install_sh), "--yes"]
+        if args.no_model:
+            cmd.append("--no-model")
+        rc = _run(cmd).returncode
+        if rc != 0:
+            return rc
+
+    if not args.no_restart:
+        print("Restarting user services...")
+        _restart_services()
+    print(f"Upgraded Relay from {installed} to {latest}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="relay")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("version").set_defaults(func=cmd_version)
+    sub.add_parser("status").set_defaults(func=cmd_status)
+    sub.add_parser("check").set_defaults(func=cmd_check)
+    sub.add_parser("uninstall").set_defaults(func=cmd_uninstall)
+    sub.add_parser("calibrate-mic").set_defaults(func=cmd_calibrate)
+    sub.add_parser("restart").set_defaults(func=cmd_restart)
+
+    install = sub.add_parser("install")
+    install.add_argument("--yes", "-y", action="store_true")
+    install.set_defaults(func=cmd_install)
+
+    check_updates = sub.add_parser("check-updates")
+    check_updates.add_argument("--quiet", action="store_true")
+    check_updates.set_defaults(func=cmd_check_updates)
+
+    upgrade = sub.add_parser("upgrade")
+    upgrade.add_argument("--force", action="store_true")
+    upgrade.add_argument("--no-model", action="store_true")
+    upgrade.add_argument("--no-restart", action="store_true")
+    upgrade.set_defaults(func=cmd_upgrade)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

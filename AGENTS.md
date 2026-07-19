@@ -13,7 +13,7 @@
 ```sh
 make lint
 make test
-shellcheck install.sh scripts/voxtype-paste-active
+shellcheck install.sh scripts/voxtype-paste-active scripts/smart-dictate
 ```
 
 - CI runs those checks in that order on Ubuntu 24.04. `make lint` is only `bash -n`, `py_compile`, and `sh -n`; it does not run ShellCheck.
@@ -25,8 +25,9 @@ shellcheck install.sh scripts/voxtype-paste-active
 
 - A real install invokes apt/sudo, may download a roughly 1.6 GB model, adds the user to `input`, deploys systemd user units, and enables services. Do not use it as routine source verification.
 - Installation renders `${HOME}`/`${DICTATION_KEY}` in `config/voxtype.toml`, key bindings in `config/xbindkeysrc`, and `${DISPLAY_PLACEHOLDER}` in the xbindkeys unit. Do not deploy these templates by copying them directly.
-- Reinstalling overwrites deployed VoxType/smart-dictate config and the entire `~/.xbindkeysrc`. It also snapshots source into `~/.local/share/smart-dictate/source`; installed CLI commands use that snapshot, not necessarily this checkout.
-- Only the installer sources repo-root `.env`, and only when `GROQ_API_KEY` is unset. Runtime scripts read process env, `~/.config/smart-dictate/config.toml`, and the key file; they never source `.env`.
+- Reinstalling overwrites deployed VoxType config and the entire `~/.xbindkeysrc`, but preserves an existing Relay config. It snapshots source into `~/.local/share/relay/source`; installed CLI commands use that snapshot, not necessarily this checkout.
+- Only the installer sources repo-root `.env`, and only when `GROQ_API_KEY` is unset. Runtime scripts read process env, `~/.config/relay/config.toml`, and the key file; they never source `.env`.
+- The Relay rename has shipped-state compatibility requirements: install `relay` plus the temporary `smart-dictate` command shim, migrate legacy config when Relay config is absent, accept deprecated `SMART_DICTATE_*` env vars, and publish both Relay and legacy archive layouts. Do not remove these bridges without an explicit migration decision.
 - API key order is `GROQ_API_KEY` -> `[groq].api_key` -> `~/.config/voxtype/groq-api-key`. For rephrase/summarize, model and endpoint order is action-specific env -> action section -> generic env -> `[groq]` -> built-in default.
 - Uninstall removes config and model data by default. `KEEP_CONFIG=1` and `KEEP_MODEL=1` preserve them; the VoxType deb itself is intentionally retained.
 
@@ -37,4 +38,4 @@ shellcheck install.sh scripts/voxtype-paste-active
 - Keep terminal detection markers synchronized between `scripts/voxtype-paste-active` and the fallback in `scripts/voxtype-rephrase`; terminals require Ctrl+Shift+V rather than Ctrl+V.
 - Wayland paste tries `ydotool` then `wtype`; X11 uses `xdotool`. Ubuntu's `ydotool` package lacks `ydotoold`, so the installer deploys the daemon unit and uinput rule only when a `ydotoold` binary already exists.
 - The `input` group is required for evdev hotkeys and uinput access, and new membership needs logout/login. The Vulkan systemd drop-in deliberately forces `VOXTYPE_VULKAN_DEVICE=nvidia`.
-- Release CI runs lint and tests, excludes `.git`, `.github`, env files, Python caches, and `dist`, then overwrites bundled `VERSION`, creates the tarball, and writes `SHA256SUMS`.
+- Release CI runs lint and tests, excludes `.git`, `.github`, env files, Python caches, and `dist`, then overwrites bundled `VERSION`, creates Relay and legacy-compatible tarballs, and writes `SHA256SUMS` for both.

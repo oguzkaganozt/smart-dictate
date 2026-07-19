@@ -1,6 +1,6 @@
-# smart-dictate configuration
+# Relay configuration
 #
-# Deployed to ~/.config/smart-dictate/config.toml by install.sh.
+# Deployed to ~/.config/relay/config.toml by install.sh.
 # Env vars (GROQ_MODEL, GROQ_ENDPOINT, GROQ_API_KEY, REPHRASE_STYLE)
 # override the values below at runtime.
 

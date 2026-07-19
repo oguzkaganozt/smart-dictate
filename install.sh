@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — bootstrap + install the smart-dictate pipeline on Ubuntu 24.04+.
+# install.sh - bootstrap + install the Relay pipeline on Ubuntu 24.04+.
 #
 # When run from a local checkout (config/voxtype.toml present) the install
 # logic runs directly.  When piped from curl or run standalone without the
@@ -31,8 +31,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 # ---- bootstrap mode: download release if local source files are missing ----
 if [[ ! -f "$SCRIPT_DIR/config/voxtype.toml" ]]; then
-  REPO="${SMART_DICTATE_REPO:-oguzkaganozt/smart-dictate}"
-  VERSION="${SMART_DICTATE_VERSION:-latest}"
+  REPO="${RELAY_REPO:-${SMART_DICTATE_REPO:-oguzkaganozt/relay}}"
+  VERSION="${RELAY_VERSION:-${SMART_DICTATE_VERSION:-latest}}"
   TMPDIR="$(mktemp -d)"
   trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -41,14 +41,14 @@ if [[ ! -f "$SCRIPT_DIR/config/voxtype.toml" ]]; then
     exit 1
   fi
 
-  echo "Downloading smart-dictate ${VERSION} from ${REPO}..."
+  echo "Downloading Relay ${VERSION} from ${REPO}..."
   python3 - "$REPO" "$VERSION" "$TMPDIR" <<'PY'
 import hashlib, json, os, subprocess, sys, urllib.request
 from pathlib import Path
 
 repo, version, tmp = sys.argv[1:4]
 tmpdir = Path(tmp)
-headers = {"User-Agent": "smart-dictate-installer"}
+headers = {"User-Agent": "relay-installer"}
 token = os.environ.get("GITHUB_TOKEN")
 if not token:
     try:
@@ -70,16 +70,19 @@ req = urllib.request.Request(url, headers=headers)
 with urllib.request.urlopen(req, timeout=20) as response:
     release = json.load(response)
 
-tar_asset = sums_asset = None
+relay_asset = legacy_asset = sums_asset = None
 for asset in release.get("assets", []):
     name = asset.get("name", "")
-    if name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
-        tar_asset = asset
+    if name.startswith("relay-") and name.endswith(".tar.gz"):
+        relay_asset = asset
+    elif name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
+        legacy_asset = asset
     elif name == "SHA256SUMS":
         sums_asset = asset
 
+tar_asset = relay_asset or legacy_asset
 if tar_asset is None or sums_asset is None:
-    raise SystemExit("release is missing smart-dictate tarball or SHA256SUMS")
+    raise SystemExit("release is missing Relay tarball or SHA256SUMS")
 
 def download(asset):
     dest = tmpdir / asset["name"]
@@ -105,34 +108,40 @@ if actual != expected:
     raise SystemExit(f"checksum mismatch for {tarball.name}")
 
 tag = release["tag_name"]
-(tmpdir / "TAG").write_text(tag, encoding="utf-8")
+(tmpdir / "ASSET").write_text(tarball.name, encoding="utf-8")
+(tmpdir / "BUNDLE").write_text(tarball.name.removesuffix(".tar.gz"), encoding="utf-8")
 print(f"Downloaded {tarball.name} ({tag})")
 PY
 
-  TAG="$(tr -d '\n' < "$TMPDIR/TAG")"
-  tar -xzf "$TMPDIR/smart-dictate-$TAG.tar.gz" -C "$TMPDIR"
-  bash "$TMPDIR/smart-dictate-$TAG/install.sh" "$@"
+  ASSET="$(tr -d '\n' < "$TMPDIR/ASSET")"
+  BUNDLE="$(tr -d '\n' < "$TMPDIR/BUNDLE")"
+  tar -xzf "$TMPDIR/$ASSET" -C "$TMPDIR"
+  bash "$TMPDIR/$BUNDLE/install.sh" "$@"
   exit $?
 fi
 
 # ---- local install paths ----
 CONFIG_SRC="$SCRIPT_DIR/config/voxtype.toml"
-SMART_DICTATE_CONFIG_SRC="$SCRIPT_DIR/config/smart-dictate.toml"
+RELAY_CONFIG_SRC="$SCRIPT_DIR/config/relay.toml"
 SYSTEMD_DIR="$SCRIPT_DIR/config/systemd"
 SCRIPT_SRC_DIR="$SCRIPT_DIR/scripts"
 VERSION_SRC="$SCRIPT_DIR/VERSION"
 
 VOXTYPE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/config.toml"
-SMART_DICTATE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
-SMART_DICTATE_CONFIG_DST="$SMART_DICTATE_CONFIG_DIR/config.toml"
+RELAY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/relay"
+RELAY_CONFIG_DST="$RELAY_CONFIG_DIR/config.toml"
+LEGACY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
+LEGACY_CONFIG_DST="$LEGACY_CONFIG_DIR/config.toml"
 VOXTYPE_KEY_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/groq-api-key"
 SYSTEMD_DST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SCRIPT_DST_DIR="${XDG_LOCAL_BIN:-$HOME/.local/bin}"
-SMART_DICTATE_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/smart-dictate"
-SMART_DICTATE_SOURCE_DST="$SMART_DICTATE_DATA_DIR/source"
+RELAY_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/relay"
+RELAY_SOURCE_DST="$RELAY_DATA_DIR/source"
+LEGACY_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/smart-dictate"
 
-UDEV_RULE_SRC="$SCRIPT_DIR/config/udev/60-smart-dictate-uinput.rules"
-UDEV_RULE_DST="/etc/udev/rules.d/60-smart-dictate-uinput.rules"
+UDEV_RULE_SRC="$SCRIPT_DIR/config/udev/60-relay-uinput.rules"
+UDEV_RULE_DST="/etc/udev/rules.d/60-relay-uinput.rules"
+LEGACY_UDEV_RULE_DST="/etc/udev/rules.d/60-smart-dictate-uinput.rules"
 
 VOXTYPE_DEB_URL="https://github.com/peteonrails/voxtype/releases/download/v0.7.5/voxtype_0.7.5-1_amd64.deb"
 # SHA256 of the pinned .deb above. The downloaded file is verified against this
@@ -370,6 +379,10 @@ step_uinput() {
   fi
   log "Installing uinput udev rule: $UDEV_RULE_DST"
   run maybe_sudo install -m 0644 "$UDEV_RULE_SRC" "$UDEV_RULE_DST"
+  if [[ -f "$LEGACY_UDEV_RULE_DST" ]]; then
+    log "Removing legacy uinput udev rule: $LEGACY_UDEV_RULE_DST"
+    run maybe_sudo rm -f "$LEGACY_UDEV_RULE_DST"
+  fi
   run maybe_sudo modprobe uinput || true
   run maybe_sudo udevadm control --reload-rules || true
   run maybe_sudo udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
@@ -409,40 +422,46 @@ step_config() {
   fi
 }
 
-step_smart_dictate_config() {
-  log "Deploying smart-dictate config: $SMART_DICTATE_CONFIG_DST"
-  run mkdir -p "$(dirname "$SMART_DICTATE_CONFIG_DST")"
+step_relay_config() {
+  log "Deploying Relay config: $RELAY_CONFIG_DST"
+  run mkdir -p "$RELAY_CONFIG_DIR"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
-    # 0600: config.toml may hold an inline api_key = "gsk_..." (see the
-    # commented field in config/smart-dictate.toml), so keep it private even
-    # on multi-user systems regardless of whether a key is actually present.
-    install -m 0600 "$SMART_DICTATE_CONFIG_SRC" "$SMART_DICTATE_CONFIG_DST"
-    if [[ -f "$VERSION_SRC" ]]; then
-      install -m 0644 "$VERSION_SRC" "$SMART_DICTATE_CONFIG_DIR/version"
+    if [[ ! -f "$RELAY_CONFIG_DST" && -f "$LEGACY_CONFIG_DST" ]]; then
+      install -m 0600 "$LEGACY_CONFIG_DST" "$RELAY_CONFIG_DST"
+      ok "migrated config from $LEGACY_CONFIG_DST"
+    elif [[ ! -f "$RELAY_CONFIG_DST" ]]; then
+      # config.toml may hold an inline api_key, so keep it private.
+      install -m 0600 "$RELAY_CONFIG_SRC" "$RELAY_CONFIG_DST"
     else
-      printf 'dev\n' > "$SMART_DICTATE_CONFIG_DIR/version"
+      chmod 0600 "$RELAY_CONFIG_DST"
+      ok "preserving existing Relay config"
     fi
-    printf '%s\n' "$SMART_DICTATE_SOURCE_DST" > "$SMART_DICTATE_CONFIG_DIR/source-dir"
+    if [[ -f "$VERSION_SRC" ]]; then
+      install -m 0644 "$VERSION_SRC" "$RELAY_CONFIG_DIR/version"
+    else
+      printf 'dev\n' > "$RELAY_CONFIG_DIR/version"
+    fi
+    printf '%s\n' "$RELAY_SOURCE_DST" > "$RELAY_CONFIG_DIR/source-dir"
   fi
 }
 
 step_source_tree() {
-  log "Deploying install source: $SMART_DICTATE_SOURCE_DST"
-  run mkdir -p "$SMART_DICTATE_SOURCE_DST"
+  log "Deploying install source: $RELAY_SOURCE_DST"
+  run mkdir -p "$RELAY_SOURCE_DST"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
-    rm -rf "$SMART_DICTATE_SOURCE_DST"
-    mkdir -p "$SMART_DICTATE_SOURCE_DST"
-    install -m 0755 "$SCRIPT_DIR/install.sh" "$SMART_DICTATE_SOURCE_DST/install.sh"
-    install -m 0644 "$SCRIPT_DIR/Makefile" "$SMART_DICTATE_SOURCE_DST/Makefile"
-    install -m 0644 "$SCRIPT_DIR/README.md" "$SMART_DICTATE_SOURCE_DST/README.md"
-    install -m 0644 "$SCRIPT_DIR/LICENSE" "$SMART_DICTATE_SOURCE_DST/LICENSE"
-    install -m 0644 "$SCRIPT_DIR/VERSION" "$SMART_DICTATE_SOURCE_DST/VERSION"
-    install -m 0644 "$SCRIPT_DIR/.env.example" "$SMART_DICTATE_SOURCE_DST/.env.example"
-    cp -a "$SCRIPT_DIR/config" "$SMART_DICTATE_SOURCE_DST/config"
-    cp -a "$SCRIPT_DIR/scripts" "$SMART_DICTATE_SOURCE_DST/scripts"
-    cp -a "$SCRIPT_DIR/docs" "$SMART_DICTATE_SOURCE_DST/docs"
-    cp -a "$SCRIPT_DIR/assets" "$SMART_DICTATE_SOURCE_DST/assets"
-    rm -rf "$SMART_DICTATE_SOURCE_DST/scripts/__pycache__"
+    rm -rf "$RELAY_SOURCE_DST"
+    mkdir -p "$RELAY_SOURCE_DST"
+    install -m 0755 "$SCRIPT_DIR/install.sh" "$RELAY_SOURCE_DST/install.sh"
+    install -m 0644 "$SCRIPT_DIR/Makefile" "$RELAY_SOURCE_DST/Makefile"
+    install -m 0644 "$SCRIPT_DIR/README.md" "$RELAY_SOURCE_DST/README.md"
+    install -m 0644 "$SCRIPT_DIR/LICENSE" "$RELAY_SOURCE_DST/LICENSE"
+    install -m 0644 "$SCRIPT_DIR/VERSION" "$RELAY_SOURCE_DST/VERSION"
+    install -m 0644 "$SCRIPT_DIR/.env.example" "$RELAY_SOURCE_DST/.env.example"
+    cp -a "$SCRIPT_DIR/config" "$RELAY_SOURCE_DST/config"
+    cp -a "$SCRIPT_DIR/scripts" "$RELAY_SOURCE_DST/scripts"
+    cp -a "$SCRIPT_DIR/docs" "$RELAY_SOURCE_DST/docs"
+    cp -a "$SCRIPT_DIR/assets" "$RELAY_SOURCE_DST/assets"
+    rm -rf "$RELAY_SOURCE_DST/scripts/__pycache__"
   fi
 }
 
@@ -465,6 +484,9 @@ step_scripts() {
       "$SCRIPT_DST_DIR/voxtype-tray"
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-calibrate-mic" \
       "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
+    install -m 0755 "$SCRIPT_SRC_DIR/relay" "$SCRIPT_DST_DIR/relay"
+    # Keep one compatibility command so existing aliases and tray processes
+    # can complete the migration through the new Relay CLI.
     install -m 0755 "$SCRIPT_SRC_DIR/smart-dictate" \
       "$SCRIPT_DST_DIR/smart-dictate"
     rendered="$(mktemp)"
@@ -600,10 +622,16 @@ verify() {
   else
     err "script:   $SCRIPT_DST_DIR/voxtype-calibrate-mic MISSING"; fail=1
   fi
-  if [[ -x "$SCRIPT_DST_DIR/smart-dictate" ]]; then
-    ok "script:   $SCRIPT_DST_DIR/smart-dictate"
+  if [[ -x "$SCRIPT_DST_DIR/relay" ]]; then
+    ok "script:   $SCRIPT_DST_DIR/relay"
   else
-    err "script:   $SCRIPT_DST_DIR/smart-dictate MISSING"; fail=1
+    err "script:   $SCRIPT_DST_DIR/relay MISSING"; fail=1
+  fi
+
+  if [[ -x "$SCRIPT_DST_DIR/smart-dictate" ]]; then
+    ok "compat:   $SCRIPT_DST_DIR/smart-dictate"
+  else
+    warn "compat:   $SCRIPT_DST_DIR/smart-dictate MISSING"
   fi
 
   if [[ -f "$VOXTYPE_CONFIG_DST" ]]; then
@@ -611,20 +639,20 @@ verify() {
   else
     err "config:   $VOXTYPE_CONFIG_DST MISSING"; fail=1
   fi
-  if [[ -f "$SMART_DICTATE_CONFIG_DST" ]]; then
-    ok "config:   $SMART_DICTATE_CONFIG_DST"
+  if [[ -f "$RELAY_CONFIG_DST" ]]; then
+    ok "config:   $RELAY_CONFIG_DST"
   else
-    err "config:   $SMART_DICTATE_CONFIG_DST MISSING"; fail=1
+    err "config:   $RELAY_CONFIG_DST MISSING"; fail=1
   fi
-  if [[ -f "$SMART_DICTATE_CONFIG_DIR/version" ]]; then
-    ok "version:  $(tr -d '\n' < "$SMART_DICTATE_CONFIG_DIR/version")"
+  if [[ -f "$RELAY_CONFIG_DIR/version" ]]; then
+    ok "version:  $(tr -d '\n' < "$RELAY_CONFIG_DIR/version")"
   else
-    err "version:  $SMART_DICTATE_CONFIG_DIR/version MISSING"; fail=1
+    err "version:  $RELAY_CONFIG_DIR/version MISSING"; fail=1
   fi
-  if [[ -x "$SMART_DICTATE_SOURCE_DST/install.sh" ]]; then
-    ok "source:   $SMART_DICTATE_SOURCE_DST"
+  if [[ -x "$RELAY_SOURCE_DST/install.sh" ]]; then
+    ok "source:   $RELAY_SOURCE_DST"
   else
-    err "source:   $SMART_DICTATE_SOURCE_DST MISSING"; fail=1
+    err "source:   $RELAY_SOURCE_DST MISSING"; fail=1
   fi
   if [[ -f "$HOME/.xbindkeysrc" ]]; then
     ok "config:   $HOME/.xbindkeysrc"
@@ -687,10 +715,10 @@ verify() {
   echo
   if [[ "$fail" -eq 0 ]]; then
     ok "verify: ok"
-    exit 0
+    return 0
   else
     err  "verify: FAIL ($fail missing)"
-    exit 1
+    return 1
   fi
 }
 
@@ -712,6 +740,7 @@ do_uninstall() {
   rm -f  "$SCRIPT_DST_DIR/voxtype-summarize"
   rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
   rm -f  "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
+  rm -f  "$SCRIPT_DST_DIR/relay"
   rm -f  "$SCRIPT_DST_DIR/smart-dictate"
   rm -f  "$SCRIPT_DST_DIR/_voxtype_groq.py"
   rm -f  "$HOME/.xbindkeysrc"
@@ -723,12 +752,17 @@ do_uninstall() {
     maybe_sudo rm -f "$UDEV_RULE_DST" || true
     maybe_sudo udevadm control --reload-rules || true
   fi
+  if [[ -f "$LEGACY_UDEV_RULE_DST" ]]; then
+    log "Removing legacy uinput udev rule: $LEGACY_UDEV_RULE_DST"
+    maybe_sudo rm -f "$LEGACY_UDEV_RULE_DST" || true
+    maybe_sudo udevadm control --reload-rules || true
+  fi
 
   if [[ "${KEEP_CONFIG:-0}" != "1" ]]; then
     rm -f "$VOXTYPE_CONFIG_DST"
-    rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
+    rm -rf "$RELAY_CONFIG_DIR" "$LEGACY_CONFIG_DIR"
   else
-    warn "KEEP_CONFIG=1: leaving voxtype config + smart-dictate config"
+    warn "KEEP_CONFIG=1: leaving VoxType, Relay, and legacy config"
   fi
 
   if [[ "${KEEP_MODEL:-0}" == "1" ]]; then
@@ -738,7 +772,7 @@ do_uninstall() {
   fi
 
   warn "Not removing the voxtype .deb itself. Run:  sudo apt remove voxtype"
-  rm -rf "$SMART_DICTATE_DATA_DIR"
+  rm -rf "$RELAY_DATA_DIR" "$LEGACY_DATA_DIR"
   ok "uninstall complete"
 }
 
@@ -753,7 +787,7 @@ case "$MODE" in
     step_input_group
     step_uinput
     step_config
-    step_smart_dictate_config
+    step_relay_config
     step_source_tree
     step_scripts
     step_api_key
@@ -772,7 +806,7 @@ case "$MODE" in
     step_input_group
     step_uinput
     step_config
-    step_smart_dictate_config
+    step_relay_config
     step_source_tree
     step_scripts
     step_api_key

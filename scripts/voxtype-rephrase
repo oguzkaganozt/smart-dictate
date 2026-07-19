@@ -102,7 +102,7 @@ def _notify(text: str) -> None:
     try:
         subprocess.run(
             ["notify-send", "--icon=edit-paste",
-             "--app-name=smart-dictate", "D\xfczeltildi", body],
+             "--app-name=relay", "D\xfczeltildi", body],
             timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:
@@ -113,7 +113,7 @@ def _notify_err(msg: str) -> None:
     try:
         subprocess.run(
             ["notify-send", "--icon=edit-paste",
-             "--app-name=smart-dictate", "Hata", msg],
+             "--app-name=relay", "Hata", msg],
             timeout=3.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception:

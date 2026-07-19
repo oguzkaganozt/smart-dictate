@@ -1,5 +1,9 @@
 # Public-Readiness Audit
 
+> Historical snapshot from before the Relay rename. References to
+> `smart-dictate` are legacy evidence, and several findings have since been
+> resolved. Use executable sources and `AGENTS.md` for current behavior.
+
 Read-only review of the smart-dictate repository for gaps and issues that
 should be addressed before treating it as a public-facing product. Findings
 are ordered by severity, each with file:line evidence, impact, and a concrete

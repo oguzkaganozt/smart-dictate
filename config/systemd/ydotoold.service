@@ -1,6 +1,6 @@
 [Unit]
-Description=ydotoold virtual input daemon for smart-dictate (Wayland paste)
-Documentation=https://github.com/oguzkaganozt/smart-dictate
+Description=ydotoold virtual input daemon for Relay (Wayland paste)
+Documentation=https://github.com/oguzkaganozt/relay
 PartOf=graphical-session.target
 After=graphical-session.target
 
@@ -9,7 +9,7 @@ Type=simple
 # Socket lives in the user runtime dir and is owned by this user so the
 # ydotool client (invoked by voxtype-paste-active) can reach it without sudo.
 # /dev/uinput access comes from the 'input' group + the udev rule installed
-# by install.sh (60-smart-dictate-uinput.rules).
+# by install.sh (60-relay-uinput.rules).
 ExecStart=/usr/bin/ydotoold --socket-path=%t/.ydotool_socket --socket-own=%U:%G
 Restart=on-failure
 RestartSec=3

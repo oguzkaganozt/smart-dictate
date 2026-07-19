@@ -1,4 +1,4 @@
-# smart-dictate: let the 'input' group open /dev/uinput so ydotoold can run
+# Relay: let the 'input' group open /dev/uinput so ydotoold can run
 # as a normal user service for Wayland keystroke injection (auto-paste).
 #
 # The installer adds the user to the 'input' group; this rule grants that

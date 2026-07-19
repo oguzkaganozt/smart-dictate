@@ -111,7 +111,7 @@ do_paste() {
 if ! do_paste; then
   # Clipboard already holds the text; the auto-paste keystroke could not be
   # delivered (common on Wayland without ydotoold). Tell the user.
-  notify-send --icon=edit-paste --app-name=smart-dictate \
+  notify-send --icon=edit-paste --app-name=relay \
     "Panoya kopyalandı" "Yapıştırmak için Ctrl+V'ye basın" \
     >/dev/null 2>&1 || true
 fi
