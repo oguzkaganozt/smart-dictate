@@ -44,8 +44,6 @@ relay uninstall       # remove everything
 `SHA256SUMS`, re-runs the installer, and restarts services. The tray app also
 shows an `Upgrade` item when an update is available.
 
-The legacy `smart-dictate` command remains as a temporary compatibility alias.
-
 | Hotkey | Action |
 | --- | --- |
 | `RIGHTCTRL` | Toggle dictation |

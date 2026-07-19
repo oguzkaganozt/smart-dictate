@@ -18,8 +18,6 @@ XDG_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"
 XDG_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
 CONFIG_DIR = XDG_CONFIG_HOME / "relay"
 DATA_DIR = XDG_DATA_HOME / "relay"
-LEGACY_CONFIG_DIR = XDG_CONFIG_HOME / "smart-dictate"
-LEGACY_DATA_DIR = XDG_DATA_HOME / "smart-dictate"
 VERSION_FILE = CONFIG_DIR / "version"
 SOURCE_DIR_FILE = CONFIG_DIR / "source-dir"
 DEFAULT_SOURCE_DIR = DATA_DIR / "source"
@@ -30,14 +28,10 @@ def _run(cmd: list[str], check: bool = False) -> subprocess.CompletedProcess:
 
 
 def _source_dir() -> Path:
-    for source_file in (SOURCE_DIR_FILE, LEGACY_CONFIG_DIR / "source-dir"):
-        if source_file.exists():
-            path = Path(source_file.read_text(encoding="utf-8").strip()).expanduser()
-            if path.exists():
-                return path
-    legacy_source = LEGACY_DATA_DIR / "source"
-    if legacy_source.exists():
-        return legacy_source
+    if SOURCE_DIR_FILE.exists():
+        path = Path(SOURCE_DIR_FILE.read_text(encoding="utf-8").strip()).expanduser()
+        if path.exists():
+            return path
     return DEFAULT_SOURCE_DIR
 
 
@@ -95,18 +89,14 @@ def _latest_release() -> dict:
 
 
 def _find_assets(release: dict) -> tuple[dict, dict]:
-    relay_tarball = None
-    legacy_tarball = None
+    tarball = None
     sums = None
     for asset in release.get("assets", []):
         name = asset.get("name", "")
         if name.startswith("relay-") and name.endswith(".tar.gz"):
-            relay_tarball = asset
-        elif name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
-            legacy_tarball = asset
+            tarball = asset
         elif name == "SHA256SUMS":
             sums = asset
-    tarball = relay_tarball or legacy_tarball
     if tarball is None or sums is None:
         raise SystemExit("latest release is missing Relay tarball or SHA256SUMS")
     return tarball, sums

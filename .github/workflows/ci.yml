@@ -27,4 +27,4 @@ jobs:
         run: make test
 
       - name: shellcheck
-        run: shellcheck install.sh scripts/voxtype-paste-active scripts/smart-dictate
+        run: shellcheck install.sh scripts/voxtype-paste-active

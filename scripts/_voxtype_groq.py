@@ -14,7 +14,6 @@ from pathlib import Path
 
 XDG_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 CONFIG_PATH = XDG_CONFIG_HOME / "relay" / "config.toml"
-LEGACY_CONFIG_PATH = XDG_CONFIG_HOME / "smart-dictate" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
 DEFAULT_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -27,11 +26,10 @@ def load_config(*sections: str) -> dict:
     an empty dict for that section (never raises).
     """
     cfg = {s: {} for s in sections}
-    config_path = CONFIG_PATH if CONFIG_PATH.exists() else LEGACY_CONFIG_PATH
-    if config_path.exists():
+    if CONFIG_PATH.exists():
         try:
             import tomllib
-            with open(config_path, "rb") as f:
+            with open(CONFIG_PATH, "rb") as f:
                 data = tomllib.load(f)
             for s in sections:
                 val = data.get(s)

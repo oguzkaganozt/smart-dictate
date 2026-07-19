@@ -1,3 +1,0 @@
-#!/bin/sh
-# Compatibility command for installations created before the Relay rename.
-exec "$(dirname "$0")/relay" "$@"

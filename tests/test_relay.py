@@ -20,10 +20,9 @@ relay = _load()
 
 
 class ReleaseAssetTests(unittest.TestCase):
-    def test_prefers_relay_archive(self):
+    def test_selects_relay_archive(self):
         release = {
             "assets": [
-                {"name": "smart-dictate-v2.tar.gz"},
                 {"name": "SHA256SUMS"},
                 {"name": "relay-v2.tar.gz"},
             ]
@@ -31,16 +30,6 @@ class ReleaseAssetTests(unittest.TestCase):
         tarball, sums = relay._find_assets(release)
         self.assertEqual(tarball["name"], "relay-v2.tar.gz")
         self.assertEqual(sums["name"], "SHA256SUMS")
-
-    def test_accepts_legacy_archive(self):
-        release = {
-            "assets": [
-                {"name": "smart-dictate-v2.tar.gz"},
-                {"name": "SHA256SUMS"},
-            ]
-        }
-        tarball, _ = relay._find_assets(release)
-        self.assertEqual(tarball["name"], "smart-dictate-v2.tar.gz")
 
     def test_requires_checksum_asset(self):
         with self.assertRaises(SystemExit):

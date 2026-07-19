@@ -31,8 +31,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 # ---- bootstrap mode: download release if local source files are missing ----
 if [[ ! -f "$SCRIPT_DIR/config/voxtype.toml" ]]; then
-  REPO="${RELAY_REPO:-${SMART_DICTATE_REPO:-oguzkaganozt/relay}}"
-  VERSION="${RELAY_VERSION:-${SMART_DICTATE_VERSION:-latest}}"
+  REPO="${RELAY_REPO:-oguzkaganozt/relay}"
+  VERSION="${RELAY_VERSION:-latest}"
   TMPDIR="$(mktemp -d)"
   trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -70,17 +70,14 @@ req = urllib.request.Request(url, headers=headers)
 with urllib.request.urlopen(req, timeout=20) as response:
     release = json.load(response)
 
-relay_asset = legacy_asset = sums_asset = None
+tar_asset = sums_asset = None
 for asset in release.get("assets", []):
     name = asset.get("name", "")
     if name.startswith("relay-") and name.endswith(".tar.gz"):
-        relay_asset = asset
-    elif name.startswith("smart-dictate-") and name.endswith(".tar.gz"):
-        legacy_asset = asset
+        tar_asset = asset
     elif name == "SHA256SUMS":
         sums_asset = asset
 
-tar_asset = relay_asset or legacy_asset
 if tar_asset is None or sums_asset is None:
     raise SystemExit("release is missing Relay tarball or SHA256SUMS")
 
@@ -130,18 +127,14 @@ VERSION_SRC="$SCRIPT_DIR/VERSION"
 VOXTYPE_CONFIG_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/config.toml"
 RELAY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/relay"
 RELAY_CONFIG_DST="$RELAY_CONFIG_DIR/config.toml"
-LEGACY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/smart-dictate"
-LEGACY_CONFIG_DST="$LEGACY_CONFIG_DIR/config.toml"
 VOXTYPE_KEY_DST="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype/groq-api-key"
 SYSTEMD_DST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SCRIPT_DST_DIR="${XDG_LOCAL_BIN:-$HOME/.local/bin}"
 RELAY_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/relay"
 RELAY_SOURCE_DST="$RELAY_DATA_DIR/source"
-LEGACY_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/smart-dictate"
 
 UDEV_RULE_SRC="$SCRIPT_DIR/config/udev/60-relay-uinput.rules"
 UDEV_RULE_DST="/etc/udev/rules.d/60-relay-uinput.rules"
-LEGACY_UDEV_RULE_DST="/etc/udev/rules.d/60-smart-dictate-uinput.rules"
 
 VOXTYPE_DEB_URL="https://github.com/peteonrails/voxtype/releases/download/v0.7.5/voxtype_0.7.5-1_amd64.deb"
 # SHA256 of the pinned .deb above. The downloaded file is verified against this
@@ -379,10 +372,6 @@ step_uinput() {
   fi
   log "Installing uinput udev rule: $UDEV_RULE_DST"
   run maybe_sudo install -m 0644 "$UDEV_RULE_SRC" "$UDEV_RULE_DST"
-  if [[ -f "$LEGACY_UDEV_RULE_DST" ]]; then
-    log "Removing legacy uinput udev rule: $LEGACY_UDEV_RULE_DST"
-    run maybe_sudo rm -f "$LEGACY_UDEV_RULE_DST"
-  fi
   run maybe_sudo modprobe uinput || true
   run maybe_sudo udevadm control --reload-rules || true
   run maybe_sudo udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
@@ -426,10 +415,7 @@ step_relay_config() {
   log "Deploying Relay config: $RELAY_CONFIG_DST"
   run mkdir -p "$RELAY_CONFIG_DIR"
   if [[ "$MODE" != "dry-run" && "$MODE" != "check" ]]; then
-    if [[ ! -f "$RELAY_CONFIG_DST" && -f "$LEGACY_CONFIG_DST" ]]; then
-      install -m 0600 "$LEGACY_CONFIG_DST" "$RELAY_CONFIG_DST"
-      ok "migrated config from $LEGACY_CONFIG_DST"
-    elif [[ ! -f "$RELAY_CONFIG_DST" ]]; then
+    if [[ ! -f "$RELAY_CONFIG_DST" ]]; then
       # config.toml may hold an inline api_key, so keep it private.
       install -m 0600 "$RELAY_CONFIG_SRC" "$RELAY_CONFIG_DST"
     else
@@ -485,10 +471,6 @@ step_scripts() {
     install -m 0755 "$SCRIPT_SRC_DIR/voxtype-calibrate-mic" \
       "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
     install -m 0755 "$SCRIPT_SRC_DIR/relay" "$SCRIPT_DST_DIR/relay"
-    # Keep one compatibility command so existing aliases and tray processes
-    # can complete the migration through the new Relay CLI.
-    install -m 0755 "$SCRIPT_SRC_DIR/smart-dictate" \
-      "$SCRIPT_DST_DIR/smart-dictate"
     rendered="$(mktemp)"
     sed -e "s|\${REPHRASE_BIND}|$REPHRASE_BIND|g" \
          -e "s|\${SUMMARIZE_BIND}|$SUMMARIZE_BIND|g" \
@@ -637,12 +619,6 @@ verify() {
     err "script:   $SCRIPT_DST_DIR/relay MISSING"; fail=1
   fi
 
-  if [[ -x "$SCRIPT_DST_DIR/smart-dictate" ]]; then
-    ok "compat:   $SCRIPT_DST_DIR/smart-dictate"
-  else
-    warn "compat:   $SCRIPT_DST_DIR/smart-dictate MISSING"
-  fi
-
   if [[ -f "$VOXTYPE_CONFIG_DST" ]]; then
     ok "config:   $VOXTYPE_CONFIG_DST"
   else
@@ -756,7 +732,6 @@ do_uninstall() {
   rm -f  "$SCRIPT_DST_DIR/voxtype-tray"
   rm -f  "$SCRIPT_DST_DIR/voxtype-calibrate-mic"
   rm -f  "$SCRIPT_DST_DIR/relay"
-  rm -f  "$SCRIPT_DST_DIR/smart-dictate"
   rm -f  "$SCRIPT_DST_DIR/_voxtype_groq.py"
   rm -f  "$HOME/.xbindkeysrc"
   rm -f  "$SYSTEMD_DST_DIR/xbindkeys.service"
@@ -767,17 +742,11 @@ do_uninstall() {
     maybe_sudo rm -f "$UDEV_RULE_DST" || true
     maybe_sudo udevadm control --reload-rules || true
   fi
-  if [[ -f "$LEGACY_UDEV_RULE_DST" ]]; then
-    log "Removing legacy uinput udev rule: $LEGACY_UDEV_RULE_DST"
-    maybe_sudo rm -f "$LEGACY_UDEV_RULE_DST" || true
-    maybe_sudo udevadm control --reload-rules || true
-  fi
-
   if [[ "${KEEP_CONFIG:-0}" != "1" ]]; then
     rm -f "$VOXTYPE_CONFIG_DST"
-    rm -rf "$RELAY_CONFIG_DIR" "$LEGACY_CONFIG_DIR"
+    rm -rf "$RELAY_CONFIG_DIR"
   else
-    warn "KEEP_CONFIG=1: leaving VoxType, Relay, and legacy config"
+    warn "KEEP_CONFIG=1: leaving VoxType and Relay config"
   fi
 
   if [[ "${KEEP_MODEL:-0}" == "1" ]]; then
@@ -787,7 +756,7 @@ do_uninstall() {
   fi
 
   warn "Not removing the voxtype .deb itself. Run:  sudo apt remove voxtype"
-  rm -rf "$RELAY_DATA_DIR" "$LEGACY_DATA_DIR"
+  rm -rf "$RELAY_DATA_DIR"
   ok "uninstall complete"
 }
 

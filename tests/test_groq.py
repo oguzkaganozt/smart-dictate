@@ -131,10 +131,7 @@ class ApiKeyTests(unittest.TestCase):
 
 class LoadConfigTests(unittest.TestCase):
     def test_missing_file_returns_empty_sections(self):
-        with (
-            mock.patch.object(groq, "CONFIG_PATH", Path("/nonexistent/c.toml")),
-            mock.patch.object(groq, "LEGACY_CONFIG_PATH", Path("/nonexistent/old.toml")),
-        ):
+        with mock.patch.object(groq, "CONFIG_PATH", Path("/nonexistent/c.toml")):
             cfg = groq.load_config("groq", "dictation")
         self.assertEqual(cfg, {"groq": {}, "dictation": {}})
 
@@ -143,31 +140,13 @@ class LoadConfigTests(unittest.TestCase):
             f.write('[groq]\nmodel = "x"\n[rephrase]\nmodel = "y"\n')
             p = Path(f.name)
         try:
-            with (
-                mock.patch.object(groq, "CONFIG_PATH", p),
-                mock.patch.object(groq, "LEGACY_CONFIG_PATH", Path("/nonexistent/old.toml")),
-            ):
+            with mock.patch.object(groq, "CONFIG_PATH", p):
                 cfg = groq.load_config("groq", "rephrase", "summarize")
         finally:
             p.unlink()
         self.assertEqual(cfg["groq"]["model"], "x")
         self.assertEqual(cfg["rephrase"]["model"], "y")
         self.assertEqual(cfg["summarize"], {})
-
-    def test_legacy_config_fallback(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-            f.write('[groq]\nmodel = "legacy"\n')
-            p = Path(f.name)
-        try:
-            with (
-                mock.patch.object(groq, "CONFIG_PATH", Path("/nonexistent/new.toml")),
-                mock.patch.object(groq, "LEGACY_CONFIG_PATH", p),
-            ):
-                cfg = groq.load_config("groq")
-        finally:
-            p.unlink()
-        self.assertEqual(cfg["groq"]["model"], "legacy")
-
 
 class BuildPayloadTests(unittest.TestCase):
     def test_includes_reasoning_for_qwen(self):

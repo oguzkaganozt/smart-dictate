@@ -41,7 +41,6 @@ jobs:
           fi
 
           bundle="relay-${version}"
-          legacy_bundle="smart-dictate-${version}"
           mkdir -p "dist/${bundle}"
           rsync -a \
             --exclude='.git/' \
@@ -56,10 +55,8 @@ jobs:
           printf '%s\n' "${version}" > "dist/${bundle}/VERSION"
 
           tar -C dist -czf "dist/${bundle}.tar.gz" "${bundle}"
-          cp -a "dist/${bundle}" "dist/${legacy_bundle}"
-          tar -C dist -czf "dist/${legacy_bundle}.tar.gz" "${legacy_bundle}"
-          rm -rf "dist/${bundle}" "dist/${legacy_bundle}"
-          (cd dist && sha256sum "${bundle}.tar.gz" "${legacy_bundle}.tar.gz" > SHA256SUMS)
+          rm -rf "dist/${bundle}"
+          (cd dist && sha256sum "${bundle}.tar.gz" > SHA256SUMS)
 
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
