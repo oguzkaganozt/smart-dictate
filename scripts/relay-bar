@@ -204,10 +204,45 @@ def _show_preview(action_id, output, snapshot, cfg):
     win.show_all()
 
 
+def _build_model_combo(cfg_value: str, placeholder: str, groq_cfg: dict) -> Gtk.ComboBoxText:
+    """Return a ComboBoxText with [Auto / Recommended] + fetched Groq models."""
+    import gi  # noqa: E402
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, GLib  # noqa: E402
+    import _voxtype_groq as groq  # noqa: E402
+
+    combo = Gtk.ComboBoxText(has_entry=True)
+    combo.set_entry_text_column(0)
+    combo.append("", f"Auto / Recommended: {placeholder}")
+
+    def _populate():
+        models = groq.list_models(groq_cfg)
+        def _on_done():
+            for m in models:
+                combo.append(m["id"], m["id"])
+            combo.show_all()
+        GLib.idle_add(_on_done)
+
+    import threading  # noqa: E402
+    threading.Thread(target=_populate, daemon=True).start()
+
+    if cfg_value:
+        combo.get_child().set_text(cfg_value)
+
+    return combo
+
+
+def _model_value(combo: Gtk.ComboBoxText) -> str:
+    """Return the active text (user-typed or selected) stripped."""
+    child = combo.get_child()
+    return child.get_text().strip() if child else ""
+
+
 def _show_settings_dialog(parent, cfg):
     import gi  # noqa: E402
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gtk  # noqa: E402
+    import _voxtype_groq as groq  # noqa: E402
 
     dlg = Gtk.Dialog(title="Relay Settings", transient_for=parent, modal=True)
     dlg.add_buttons("Close", Gtk.ResponseType.CLOSE)
@@ -215,6 +250,8 @@ def _show_settings_dialog(parent, cfg):
     box = dlg.get_content_area()
     box.set_spacing(8)
     box.set_border_width(12)
+
+    groq_cfg = groq.load_config("groq").get("groq", {})
 
     cloud = Gtk.CheckButton(label="Cloud processing (send text to the remote model)")
     cloud.set_active(settings.cloud_processing_enabled(cfg))
@@ -227,16 +264,10 @@ def _show_settings_dialog(parent, cfg):
         label="Right Ctrl visual context (capture after transcription)")
     right_visual.set_active(cfg.get("right_ctrl_visual_context", False))
 
-    import _voxtype_groq as groq  # noqa: E402
-    text_model = Gtk.Entry()
-    text_model.set_text(settings.text_model(cfg))
-    text_model.set_placeholder_text(f"Auto / Recommended: {groq.DEFAULT_MODEL}")
-    text_model.set_width_chars(48)
-    vision_model = Gtk.Entry()
-    vision_model.set_text(settings.vision_model(cfg))
-    vision_model.set_placeholder_text(
-        f"Auto / Recommended: {groq.DEFAULT_VISION_MODEL}")
-    vision_model.set_width_chars(48)
+    text_model = _build_model_combo(
+        settings.text_model(cfg), groq.DEFAULT_MODEL, groq_cfg)
+    vision_model = _build_model_combo(
+        settings.vision_model(cfg), groq.DEFAULT_VISION_MODEL, groq_cfg)
 
     box.pack_start(Gtk.Label(label="<b>Privacy (V2)</b>", use_markup=True), False, False, 0)
     box.pack_start(cloud, False, False, 0)
@@ -260,8 +291,8 @@ def _show_settings_dialog(parent, cfg):
               "active window is captured after transcription."), False, False, 0)
 
     def _on_response(d, _response):
-        text_value = text_model.get_text().strip()
-        vision_value = vision_model.get_text().strip()
+        text_value = _model_value(text_model)
+        vision_value = _model_value(vision_model)
         invalid = [
             label for label, value in (
                 ("Text model", text_value),
@@ -439,12 +470,26 @@ def _show_working_then_run(action_id, input_text, snapshot, cfg):
     _run_action_threaded(action_id, input_text, snapshot, cfg, _on_done)
 
 
+def _open_settings_only() -> None:
+    """Open the settings dialog standalone (relay-bar --settings)."""
+    import gi  # noqa: E402
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk  # noqa: E402
+    Gtk.init()
+    cfg = settings.load()
+    dlg = _show_settings_dialog(None, cfg)
+    dlg.connect("response", lambda *_: Gtk.main_quit())
+    Gtk.main()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="relay-bar", description="Relay Bar surface")
     parser.add_argument("--actions", action="store_true",
                         help="print action ids and exit (no display needed)")
     parser.add_argument("--version", action="store_true",
                         help="print installed version and exit")
+    parser.add_argument("--settings", action="store_true",
+                        help="open the settings dialog and exit")
     args = parser.parse_args()
 
     if args.version:
@@ -452,6 +497,9 @@ def main() -> int:
         return 0
     if args.actions:
         return _print_actions()
+    if args.settings:
+        _open_settings_only()
+        return 0
 
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         print("relay-bar: no display found (DISPLAY/WAYLAND_DISPLAY unset)", file=sys.stderr)

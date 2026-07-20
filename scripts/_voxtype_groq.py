@@ -17,6 +17,7 @@ CONFIG_PATH = XDG_CONFIG_HOME / "relay" / "config.toml"
 KEY_FILE = Path.home() / ".config" / "voxtype" / "groq-api-key"
 DEFAULT_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+MODELS_ENDPOINT = "https://api.groq.com/openai/v1/models"
 
 
 def load_config(*sections: str) -> dict:
@@ -184,3 +185,34 @@ def call_groq(endpoint: str, api_key: str, payload: dict, *,
         return ""
     content = choices[0].get("message", {}).get("content", "").strip()
     return content.strip('"').strip()
+
+
+def list_models(groq_cfg: dict = None) -> list[dict]:
+    """Fetch available models from the Groq API.
+
+    Returns a list of dicts with keys ``id`` and ``owned_by`` sorted
+    alphabetically by ``id``, or an empty list on any error.
+    """
+    api_key = get_api_key(groq_cfg)
+    if not api_key:
+        return []
+    try:
+        req = urllib.request.Request(
+            MODELS_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Relay/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        models = [
+            {"id": m["id"], "owned_by": m.get("owned_by", "")}
+            for m in (data.get("data") or [])
+            if isinstance(m, dict) and m.get("id")
+        ]
+        models.sort(key=lambda m: m["id"])
+        return models
+    except Exception:
+        return []

@@ -194,6 +194,55 @@ class TextImageContentTests(unittest.TestCase):
                       c[1]["image_url"]["url"])
 
 
+class ListModelsTests(unittest.TestCase):
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        for k in ["GROQ_API_KEY"]:
+            os.environ.pop(k, None)
+        self._key_file = mock.patch.object(groq, "KEY_FILE", Path("/nonexistent/xyz"))
+        self._key_file.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._key_file.stop()
+
+    def test_missing_key_returns_empty(self):
+        self.assertEqual(groq.list_models({}), [])
+
+    def test_parses_and_sorts(self):
+        os.environ["GROQ_API_KEY"] = "key"
+        body = ('{"data": [{"id": "z-model", "owned_by": "groq"}, '
+                '{"id": "a-model", "owned_by": "groq"}]}')
+        resp = mock.MagicMock()
+        resp.read.return_value = body.encode("utf-8")
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            result = groq.list_models({})
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["id"], "a-model")
+        self.assertEqual(result[1]["id"], "z-model")
+
+    def test_filters_bad_items(self):
+        os.environ["GROQ_API_KEY"] = "key"
+        body = ('{"data": [{"id": "good"}, {"id": "", "owned_by": "x"}, '
+                '{"not_an_id": "y"}, "string", 42, null]}')
+        resp = mock.MagicMock()
+        resp.read.return_value = body.encode("utf-8")
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            result = groq.list_models({})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], "good")
+
+    def test_http_error_returns_empty(self):
+        os.environ["GROQ_API_KEY"] = "key"
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=OSError("connection failed")):
+            result = groq.list_models({})
+        self.assertEqual(result, [])
+
+
 class ResolveVisionModelTests(unittest.TestCase):
     def setUp(self):
         self._env = mock.patch.dict(os.environ, {}, clear=False)
