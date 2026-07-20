@@ -170,6 +170,22 @@ def capture_screenshot(wid: str = "") -> str:
         return ""
 
 
+def capture_live_screenshot() -> str:
+    """Best-effort screenshot for direct Right Ctrl dictation.
+
+    VoxType has no pre-record hook, so this captures the active window during
+    post-processing. The caller must delete the returned path immediately
+    after the model call.
+    """
+    try:
+        if _is_wayland():
+            return capture_screenshot("")
+        wid, _title, _app = _active_window_x11()
+        return capture_screenshot(wid) if wid else ""
+    except Exception:
+        return ""
+
+
 def encode_image_b64(path: str) -> str:
     """Base64-encode a PNG for an OpenAI-compatible image_url content block.
     Returns "" if the file is missing/empty."""

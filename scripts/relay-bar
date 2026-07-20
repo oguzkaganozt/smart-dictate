@@ -126,6 +126,8 @@ def _run_action_threaded(action_id, input_text, snapshot, cfg, on_done):
             cloud_processing=settings.cloud_processing_enabled(cfg),
             context_sharing=settings.context_sharing_enabled(cfg),
             image_b64=image_b64,
+            text_model=settings.text_model(cfg),
+            vision_model=settings.vision_model(cfg),
         )
         GLib.idle_add(lambda: on_done(out, err))
 
@@ -148,7 +150,7 @@ def _show_preview(action_id, output, snapshot, cfg):
     win.set_border_width(12)
     win.set_position(Gtk.WindowPosition.CENTER)
     win.set_keep_above(True)
-    win.connect("destroy", lambda *_: Gtk.main_quit())
+    destroy_handler = win.connect("destroy", lambda *_: Gtk.main_quit())
     win.connect("key-press-event", lambda _w, e: Gtk.main_quit()
                 if e.keyval == Gdk.KEY_Escape else None)
 
@@ -179,6 +181,7 @@ def _show_preview(action_id, output, snapshot, cfg):
         return True
 
     def _retry(_):
+        win.disconnect(destroy_handler)
         win.destroy()
         # Re-open the bar so the user can pick a different action/input.
         # The snapshot is still valid (same session); just restart the loop.
@@ -214,11 +217,26 @@ def _show_settings_dialog(parent, cfg):
     box.set_border_width(12)
 
     cloud = Gtk.CheckButton(label="Cloud processing (send text to the remote model)")
-    cloud.set_active(cfg["cloud_processing"])
-    ctx = Gtk.CheckButton(label="Context sharing (send active window/app/selection to the model)")
-    ctx.set_active(cfg["context_sharing"])
+    cloud.set_active(settings.cloud_processing_enabled(cfg))
+    ctx = Gtk.CheckButton(
+        label="Context sharing (send screenshot/app/title/selection to the model)")
+    ctx.set_active(bool(cfg.get("context_sharing", True)))
     consent = Gtk.CheckButton(label="I have consented to context sharing")
-    consent.set_active(cfg["context_sharing_consented"])
+    consent.set_active(bool(cfg.get("context_sharing_consented", False)))
+    right_visual = Gtk.CheckButton(
+        label="Right Ctrl visual context (capture after transcription)")
+    right_visual.set_active(cfg.get("right_ctrl_visual_context", False))
+
+    import _voxtype_groq as groq  # noqa: E402
+    text_model = Gtk.Entry()
+    text_model.set_text(settings.text_model(cfg))
+    text_model.set_placeholder_text(f"Auto / Recommended: {groq.DEFAULT_MODEL}")
+    text_model.set_width_chars(48)
+    vision_model = Gtk.Entry()
+    vision_model.set_text(settings.vision_model(cfg))
+    vision_model.set_placeholder_text(
+        f"Auto / Recommended: {groq.DEFAULT_VISION_MODEL}")
+    vision_model.set_width_chars(48)
 
     box.pack_start(Gtk.Label(label="<b>Privacy (V2)</b>", use_markup=True), False, False, 0)
     box.pack_start(cloud, False, False, 0)
@@ -227,15 +245,57 @@ def _show_settings_dialog(parent, cfg):
     box.pack_start(Gtk.Label(
         label="Turning context sharing off does not change cloud processing. "
               "When cloud processing is off, remote Actions are unavailable."), False, False, 0)
+    box.pack_start(Gtk.Separator(), False, False, 4)
+    box.pack_start(Gtk.Label(label="<b>Models</b>", use_markup=True), False, False, 0)
+    box.pack_start(Gtk.Label(label="Text model (empty = Auto / Recommended)"), False, False, 0)
+    box.pack_start(text_model, False, False, 0)
+    box.pack_start(Gtk.Label(label="Vision model (empty = Auto / Recommended)"), False, False, 0)
+    box.pack_start(vision_model, False, False, 0)
+    box.pack_start(Gtk.Separator(), False, False, 4)
+    box.pack_start(Gtk.Label(label="<b>Direct dictation</b>", use_markup=True), False, False, 0)
+    box.pack_start(right_visual, False, False, 0)
+    box.pack_start(Gtk.Label(
+        label="Optional and privacy-gated: only runs when Context sharing and "
+              "consent are both on. VoxType has no pre-record hook, so the "
+              "active window is captured after transcription."), False, False, 0)
 
-    def _on_close(_d):
+    def _on_response(d, _response):
+        text_value = text_model.get_text().strip()
+        vision_value = vision_model.get_text().strip()
+        invalid = [
+            label for label, value in (
+                ("Text model", text_value),
+                ("Vision model", vision_value),
+            )
+            if not settings.valid_model_id(value, allow_empty=True)
+        ]
+        if invalid:
+            err = Gtk.MessageDialog(
+                transient_for=d, modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.CLOSE,
+                text="Invalid model ID",
+            )
+            err.format_secondary_text(
+                f"{', '.join(invalid)} must contain only letters, numbers, "
+                "dots, underscores, slashes, or hyphens (max 200 chars).")
+            err.run()
+            err.destroy()
+            return
+
         new = dict(cfg)
         new["cloud_processing"] = cloud.get_active()
         new["context_sharing"] = ctx.get_active()
         new["context_sharing_consented"] = consent.get_active()
+        new["text_model"] = text_value
+        new["vision_model"] = vision_value
+        new["right_ctrl_visual_context"] = right_visual.get_active()
         settings.save(new)
+        cfg.clear()
+        cfg.update(new)
+        d.destroy()
 
-    dlg.connect("response", lambda d, _r: (_on_close(d), d.destroy()))
+    dlg.connect("response", _on_response)
     dlg.show_all()
     return dlg
 
@@ -258,9 +318,9 @@ def _consent_first_use(parent, snapshot, cfg):
         text="Allow context sharing?",
     )
     dlg.format_secondary_text(
-        "Relay can send your active window's app name, title, and selected "
-        "text to the model to improve results. This is data only - never "
-        "treated as instructions. Cloud processing is separate. Allow?")
+        "Relay can send your active window screenshot, app name, title, and "
+        "selected text to the model to improve results. This is data only - "
+        "never treated as instructions. Cloud processing is separate. Allow?")
     resp = dlg.run()
     dlg.destroy()
     if resp == Gtk.ResponseType.YES:
@@ -422,7 +482,10 @@ def main() -> int:
     cfg = settings.load()
 
     win = _build_bar_window(snapshot, cfg)
-    cfg = _consent_first_use(win, snapshot, cfg)
+    updated_cfg = _consent_first_use(win, snapshot, cfg)
+    if updated_cfg is not cfg:
+        cfg.clear()
+        cfg.update(updated_cfg)
 
     Gtk.main()
     # Clear the temporary context snapshot on exit (V2: no persistent memory).

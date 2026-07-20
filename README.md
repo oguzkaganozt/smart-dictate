@@ -59,7 +59,7 @@ Key files under `~/.config/`:
 | --- | --- |
 | `voxtype/config.toml` | VoxType daemon (hotkey, model, paste) |
 | `relay/config.toml` | Groq model, prompts |
-| `relay/settings.toml` | V2 privacy toggles (cloud processing, context sharing) |
+| `relay/settings.toml` | Privacy, text/vision models, optional Right Ctrl visual context |
 | `relay/xbindkeysrc` | Relay key bindings (rephrase / summarize / Relay Bar) |
 
 API key lookup: `GROQ_API_KEY` env -> `relay/config.toml` ->

@@ -89,6 +89,14 @@ class ResolveTests(unittest.TestCase):
             "pref",
         )
 
+    def test_settings_model_beats_section_config(self):
+        self.assertEqual(
+            groq.resolve_model(
+                {"model": "generic"}, {"model": "section"}, "REPHRASE",
+                user_model="settings-model"),
+            "settings-model",
+        )
+
     def test_endpoint_precedence(self):
         os.environ["SUMMARIZE_ENDPOINT"] = "https://sum"
         self.assertEqual(
@@ -219,6 +227,13 @@ class ResolveVisionModelTests(unittest.TestCase):
         self.assertEqual(
             groq.resolve_vision_model({"vision_model": "g"}, {"vision_model": "s"}),
             "s")
+
+    def test_settings_model_beats_section_config(self):
+        self.assertEqual(
+            groq.resolve_vision_model(
+                {"vision_model": "g"}, {"vision_model": "s"}, "REPHRASE",
+                user_model="settings-vision"),
+            "settings-vision")
 
 
 if __name__ == "__main__":

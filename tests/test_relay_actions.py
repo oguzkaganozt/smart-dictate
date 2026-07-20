@@ -123,12 +123,12 @@ class _FakeGroq:
     def load_config(self, *sections):
         return {s: {} for s in sections}
 
-    def resolve_model(self, cfg, section=None, prefix=None):
-        return "text-model"
+    def resolve_model(self, cfg, section=None, prefix=None, user_model=""):
+        return user_model or "text-model"
 
-    def resolve_vision_model(self, cfg, section=None, prefix=None):
+    def resolve_vision_model(self, cfg, section=None, prefix=None, user_model=""):
         self.vision_model_called = True
-        return "vision-model"
+        return user_model or "vision-model"
 
     def resolve_endpoint(self, cfg, section=None, prefix=None):
         return "https://fake"
@@ -244,6 +244,19 @@ class RunActionTests(unittest.TestCase):
                                       context_sharing=True, image_b64="ZmFrZQ==")
         self.assertIsNone(out)
         self.assertIn("cloud", err.lower())
+
+    def test_settings_text_model_override_used(self):
+        groq = _FakeGroq(output="ok")
+        actions.run_action("rewrite", "hi", groq, text_model="custom/text")
+        self.assertEqual(groq.last_payload["model"], "custom/text")
+
+    def test_settings_vision_model_override_used(self):
+        groq = _FakeGroq(output="ok")
+        actions.run_action(
+            "explain", "hi", groq,
+            context_sharing=True, image_b64="ZmFrZQ==",
+            vision_model="custom/vision")
+        self.assertEqual(groq.last_payload["model"], "custom/vision")
 
 
 class FormatContextTests(unittest.TestCase):

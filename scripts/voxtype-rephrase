@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _voxtype_groq as groq  # noqa: E402
+import _relay_settings as relay_settings  # noqa: E402
 
 LOG = Path("/tmp") / "voxtype-rephrase.log"
 
@@ -23,7 +24,10 @@ def log(msg: str) -> None:
 
 _cfg = groq.load_config("groq", "rephrase")
 
-MODEL = groq.resolve_model(_cfg["groq"], _cfg["rephrase"], "REPHRASE")
+MODEL = groq.resolve_model(
+    _cfg["groq"], _cfg["rephrase"], "REPHRASE",
+    user_model=relay_settings.text_model(relay_settings.load()),
+)
 ENDPOINT = groq.resolve_endpoint(_cfg["groq"], _cfg["rephrase"], "REPHRASE")
 
 DEFAULT_PROMPT = (
@@ -184,6 +188,10 @@ def main() -> int:
 
     if len(text) > 20000:
         _notify_err(f"Metin \xe7ok uzun ({len(text)} karakter, max 20000)")
+        return 1
+
+    if not relay_settings.cloud_processing_enabled(relay_settings.load()):
+        _notify_err("Cloud processing kapali; Rewrite kullanilamiyor")
         return 1
 
     try:

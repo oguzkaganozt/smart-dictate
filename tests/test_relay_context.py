@@ -242,6 +242,28 @@ class ScreenshotTests(unittest.TestCase):
         with mock.patch.object(ctx, "_screenshot_x11", side_effect=RuntimeError("boom")):
             self.assertEqual(ctx.capture_screenshot("734"), "")
 
+    def test_live_screenshot_uses_active_x11_window(self):
+        with mock.patch.object(ctx, "_is_wayland", return_value=False), \
+             mock.patch.object(ctx, "_active_window_x11",
+                               return_value=("734", "main", "ghostty")), \
+             mock.patch.object(ctx, "capture_screenshot",
+                               return_value="/tmp/live.png") as capture:
+            path = ctx.capture_live_screenshot()
+        self.assertEqual(path, "/tmp/live.png")
+        capture.assert_called_once_with("734")
+
+    def test_live_screenshot_uses_portal_on_wayland(self):
+        with mock.patch.object(ctx, "_is_wayland", return_value=True), \
+             mock.patch.object(ctx, "capture_screenshot",
+                               return_value="/tmp/live.png") as capture:
+            path = ctx.capture_live_screenshot()
+        self.assertEqual(path, "/tmp/live.png")
+        capture.assert_called_once_with("")
+
+    def test_live_screenshot_never_raises(self):
+        with mock.patch.object(ctx, "_is_wayland", side_effect=RuntimeError("boom")):
+            self.assertEqual(ctx.capture_live_screenshot(), "")
+
     def test_encode_image_b64_missing_file(self):
         self.assertEqual(ctx.encode_image_b64("/nonexistent/x.png"), "")
 

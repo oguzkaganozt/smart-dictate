@@ -184,6 +184,8 @@ def run_action(action_id: str, input_text: str, groq_module,
                 cloud_processing: bool = True,
                 context_sharing: bool = False,
                 image_b64: str | None = None,
+                text_model: str = "",
+                vision_model: str = "",
                 target_lang: str = "English",
                 instruction: str = "") -> tuple[str | None, str | None]:
     """Run a Relay Action via the shared Groq module.
@@ -216,9 +218,10 @@ def run_action(action_id: str, input_text: str, groq_module,
     cfg = groq_module.load_config("groq")
     use_vision = bool(context_sharing and image_b64)
     if use_vision:
-        model = groq_module.resolve_vision_model(cfg["groq"])
+        model = groq_module.resolve_vision_model(
+            cfg["groq"], user_model=vision_model)
     else:
-        model = groq_module.resolve_model(cfg["groq"])
+        model = groq_module.resolve_model(cfg["groq"], user_model=text_model)
     endpoint = groq_module.resolve_endpoint(cfg["groq"])
     api_key = groq_module.get_api_key(cfg["groq"])
     if not api_key:

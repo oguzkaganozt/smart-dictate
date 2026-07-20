@@ -169,5 +169,111 @@ class MainFailOpenTests(unittest.TestCase):
         self.assertFalse(clean.called)
 
 
+class ContextualCleanTests(unittest.TestCase):
+    def _clean(self, cfg, *, snapshot=None, live_path="", live_b64=""):
+        patches = [
+            mock.patch.object(cd.groq, "get_api_key", return_value="key"),
+            mock.patch.object(cd.groq, "call_groq", return_value="cleaned"),
+            mock.patch.object(cd.relay_context, "read_dictation_context",
+                              return_value=("ghostty", "terminal")),
+            mock.patch.object(cd.relay_context, "load_snapshot", return_value=snapshot),
+            mock.patch.object(cd.relay_context, "capture_live_screenshot",
+                              return_value=live_path),
+            mock.patch.object(cd.relay_context, "encode_image_b64",
+                              return_value=live_b64),
+            mock.patch.object(cd.relay_settings, "load", return_value=cfg),
+        ]
+        entered = [p.start() for p in patches]
+        try:
+            output = cd.clean("a long dictated sentence for cleanup")
+            return output, entered
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    def test_right_ctrl_visual_default_off_does_not_capture(self):
+        cfg = {
+            "context_sharing": True,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": False,
+        }
+        output, mocks = self._clean(cfg)
+        self.assertEqual(output, "cleaned")
+        capture_mock = mocks[4]
+        self.assertFalse(capture_mock.called)
+
+    def test_right_ctrl_visual_off_ignores_sidecar_image(self):
+        cfg = {
+            "context_sharing": True,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": False,
+        }
+        snapshot = {"has_image": True, "screenshot_path": "/tmp/sidecar.png"}
+        with mock.patch.object(cd.relay_context, "context_image_b64") as image:
+            self._clean(cfg, snapshot=snapshot)
+        image.assert_not_called()
+
+    def test_right_ctrl_visual_captures_when_opted_in(self):
+        cfg = {
+            "context_sharing": True,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": True,
+        }
+        with mock.patch.object(cd.relay_context, "delete_screenshot") as delete:
+            output, mocks = self._clean(
+                cfg, live_path="/tmp/right-ctrl.png", live_b64="ZmFrZQ==")
+        self.assertEqual(output, "cleaned")
+        self.assertTrue(mocks[4].called)
+        delete.assert_called_once_with("/tmp/right-ctrl.png")
+
+    def test_right_ctrl_visual_privacy_gate_blocks_capture(self):
+        cfg = {
+            "context_sharing": False,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": True,
+        }
+        _output, mocks = self._clean(cfg)
+        self.assertFalse(mocks[4].called)
+
+    def test_context_sharing_off_blocks_app_title_capture(self):
+        cfg = {
+            "context_sharing": False,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": True,
+        }
+        _output, mocks = self._clean(cfg)
+        self.assertFalse(mocks[2].called)
+
+    def test_settings_text_model_used_without_image(self):
+        cfg = {
+            "context_sharing": True,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": False,
+            "text_model": "custom/text",
+        }
+        with mock.patch.object(cd.groq, "resolve_model", return_value="custom/text") as resolve:
+            output, _ = self._clean(cfg)
+        self.assertEqual(output, "cleaned")
+        resolve.assert_called_once_with(cd._cfg["groq"], user_model="custom/text")
+
+    def test_cloud_processing_off_returns_input_without_remote_call(self):
+        cfg = {
+            "cloud_processing": False,
+            "context_sharing": True,
+            "context_sharing_consented": True,
+            "right_ctrl_visual_context": True,
+        }
+        with mock.patch.object(cd.relay_settings, "load", return_value=cfg), \
+             mock.patch.object(cd.groq, "get_api_key") as key, \
+             mock.patch.object(cd.groq, "call_groq") as call, \
+             mock.patch.object(cd.relay_context,
+                               "capture_live_screenshot") as capture:
+            output = cd.clean("original dictated text")
+        self.assertEqual(output, "original dictated text")
+        key.assert_not_called()
+        call.assert_not_called()
+        capture.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

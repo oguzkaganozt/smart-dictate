@@ -33,6 +33,7 @@ import urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _voxtype_groq as groq  # noqa: E402
 import _relay_context as relay_context  # noqa: E402
+import _relay_settings as relay_settings  # noqa: E402
 
 
 _cfg = groq.load_config("groq", "dictation")
@@ -85,14 +86,19 @@ def clean(text: str) -> str:
 MET\u0130N:
 {text}"""
 
-    # V2 step 11: contextual dictation. Adapt tone to the active app via a
-    # Relay-controlled hint (the title is DATA, never an instruction). Context
-    # capture is best-effort and must never block or break fail-open.
-    try:
-        app, title = relay_context.read_dictation_context()
-        hint = relay_context.tone_hint(app, title)
-    except Exception:
-        hint = ""
+    privacy_cfg = relay_settings.load()
+    if not relay_settings.cloud_processing_enabled(privacy_cfg):
+        return text
+
+    # V2 step 11: contextual dictation. Context sharing gates ALL metadata;
+    # when off, app/title/selection/screenshot never enter the model request.
+    hint = ""
+    if relay_settings.context_sharing_enabled(privacy_cfg):
+        try:
+            app, title = relay_context.read_dictation_context()
+            hint = relay_context.tone_hint(app, title)
+        except Exception:
+            hint = ""
     if hint:
         user = user + "\n\n" + hint
 
@@ -105,29 +111,40 @@ MET\u0130N:
 
     use_vision = False
     image_b64 = None
+    live_shot = ""
     try:
-        from _relay_settings import load as _load_settings, context_sharing_enabled
-        _cfg_priv = _load_settings()
-        if context_sharing_enabled(_cfg_priv):
+        if relay_settings.right_ctrl_visual_enabled(privacy_cfg):
             snap = relay_context.load_snapshot()
             image_b64 = relay_context.context_image_b64(snap, True)
+            if not image_b64 and snap is None:
+                live_shot = relay_context.capture_live_screenshot()
+                image_b64 = relay_context.encode_image_b64(live_shot)
             use_vision = bool(image_b64)
     except Exception:
         use_vision = False
 
-    if use_vision:
-        model = groq.resolve_vision_model(_cfg["groq"])
-    else:
-        model = MODEL
-    user_content = groq.text_image_content(user, image_b64 if use_vision else None)
-    # Dictation needs a small, fast cap (short snippets); not the TPM budget.
-    payload = groq.build_payload(
-        model, system, user_content, temperature=0.0, max_completion_tokens=512,
-    )
-    return groq.call_groq(
-        ENDPOINT, api_key, payload, timeout=8.0,
-        user_agent="voxtype-dictation-cleaner/1.0",
-    )
+    try:
+        if use_vision:
+            model = groq.resolve_vision_model(
+                _cfg["groq"],
+                user_model=relay_settings.vision_model(privacy_cfg))
+        else:
+            model = groq.resolve_model(
+                _cfg["groq"],
+                user_model=relay_settings.text_model(privacy_cfg))
+        user_content = groq.text_image_content(
+            user, image_b64 if use_vision else None)
+        # Dictation needs a small, fast cap (short snippets); not the TPM budget.
+        payload = groq.build_payload(
+            model, system, user_content, temperature=0.0,
+            max_completion_tokens=512,
+        )
+        return groq.call_groq(
+            ENDPOINT, api_key, payload, timeout=8.0,
+            user_agent="voxtype-dictation-cleaner/1.0",
+        )
+    finally:
+        relay_context.delete_screenshot(live_shot)
 
 
 def _notify(text: str) -> None:
